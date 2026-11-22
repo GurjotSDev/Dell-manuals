@@ -1,0 +1,30 @@
+[project]
+name = "alienrag"
+version = "0.1.0"
+description = "Local RAG over Alienware manuals (Docling + LanceDB + Ollama)"
+authors = [
+    { name = "GurjotSDev", email = "har03gur@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "docling>=2.151",
+    "torch>=2.11",
+    "torchvision",
+]
+
+[project.scripts]
+index = "alienrag.cli:index_main"
+ask = "alienrag.cli:ask_main"
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
