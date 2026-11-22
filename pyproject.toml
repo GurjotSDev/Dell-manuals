@@ -28,3 +28,17 @@ torchvision = { index = "pytorch-cu128" }
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.414",
+    "pytest>=9.2.0",
+]
+
+[tool.pyright]
+include = ["src", "tests", "scripts"]
+# Docling's documented public imports (docling_core.types.doc) re-export without __all__.
+reportPrivateImportUsage = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

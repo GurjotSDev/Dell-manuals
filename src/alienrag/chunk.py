@@ -5,6 +5,12 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from docling.chunking import HybridChunker
+from docling_core.transforms.chunker.hierarchical_chunker import (
+    ChunkingDocSerializer,
+    DocChunk,
+    ChunkingSerializerProvider,
+)
+from docling_core.transforms.serializer.markdown import MarkdownTableSerializer
 from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
 from docling_core.types.doc import DoclingDocument, PictureItem
 from transformers import AutoTokenizer
@@ -24,27 +30,33 @@ class Chunk:
     n_tokens: int = 0
 
 
+class _MarkdownTables(ChunkingSerializerProvider):
+    """Serialize tables as Markdown. Docling's default "row, col = value" triplets
+    drop cells on these manuals' multi-page spec and BIOS tables; Markdown keeps all."""
+
+    def get_serializer(self, doc: DoclingDocument) -> ChunkingDocSerializer:
+        return ChunkingDocSerializer(doc=doc, table_serializer=MarkdownTableSerializer())
+
+
 def build_chunker() -> HybridChunker:
     tok = HuggingFaceTokenizer(
         tokenizer=AutoTokenizer.from_pretrained(config.EMBED_TOKENIZER),
         max_tokens=config.CHUNK_MAX_TOKENS,
     )
-    return HybridChunker(tokenizer=tok, merge_peers=True)
+    return HybridChunker(tokenizer=tok, merge_peers=True, serializer_provider=_MarkdownTables())
 
 
-def _image_path(item: PictureItem, img_dir: Path) -> str | None:
+def _image_path(item: PictureItem, source: str) -> str | None:
+    """Image path relative to the data dir: images/<source>/<file>.png."""
     if item.image is None or item.image.uri is None:
         return None
-    p = Path(str(item.image.uri))
-    if not p.is_absolute():
-        p = img_dir / p.name
-    return p.relative_to(config.DATA_DIR).as_posix() if p.is_relative_to(config.DATA_DIR) else str(p)
+    return f"images/{source}/{Path(str(item.image.uri)).name}"
 
 
 SKIP_SECTIONS = {"contents"}  # table-of-contents pages are retrieval noise
 
 
-def _pictures_by_anchor(doc: DoclingDocument, img_dir: Path) -> dict[str, list[str]]:
+def _pictures_by_anchor(doc: DoclingDocument, source: str) -> dict[str, list[str]]:
     """Map each picture to the text item preceding it in reading order.
 
     HybridChunker drops pictures from chunk doc_items, so pictures are re-attached to
@@ -54,7 +66,7 @@ def _pictures_by_anchor(doc: DoclingDocument, img_dir: Path) -> dict[str, list[s
     last_text: str | None = None
     for item, _ in doc.iterate_items():
         if isinstance(item, PictureItem):
-            if last_text and (path := _image_path(item, img_dir)):
+            if last_text and (path := _image_path(item, source)):
                 anchors.setdefault(last_text, []).append(path)
         elif hasattr(item, "text"):
             last_text = item.self_ref
@@ -62,13 +74,20 @@ def _pictures_by_anchor(doc: DoclingDocument, img_dir: Path) -> dict[str, list[s
 
 
 def chunk_document(chunker: HybridChunker, doc: DoclingDocument, source: str) -> list[Chunk]:
-    img_dir = config.IMAGES_DIR / source
-    anchors = _pictures_by_anchor(doc, img_dir)
+    anchors = _pictures_by_anchor(doc, source)
+    # Front matter (cover page) precedes the first outline heading; label it with the
+    # manual title: the first body text in reading order (page furniture excluded).
+    title = next(
+        (t for item, _ in doc.iterate_items() if (t := getattr(item, "text", "").strip())),
+        source,
+    )
     out: list[Chunk] = []
-    for ch in chunker.chunk(doc):
-        headings = list(ch.meta.headings or [])
-        if headings and headings[0].strip().lower() in SKIP_SECTIONS:
+    for base in chunker.chunk(doc):
+        ch = DocChunk.model_validate(base)
+        headings = list(ch.meta.headings or []) or [title]
+        if headings[0].strip().lower() in SKIP_SECTIONS:
             continue
+        ch.meta.headings = headings  # so contextualize() prefixes the fallback title too
         pages = sorted({p.page_no for it in ch.meta.doc_items for p in it.prov})
         images = [p for it in ch.meta.doc_items for p in anchors.get(it.self_ref, [])]
         embed_text = chunker.contextualize(ch)
@@ -87,12 +106,12 @@ def chunk_document(chunker: HybridChunker, doc: DoclingDocument, source: str) ->
     return out
 
 
-def chunks_path(source: str) -> Path:
-    return config.CHUNKS_DIR / f"{source}.jsonl"
+def chunks_path(source: str, data_dir: Path) -> Path:
+    return data_dir / "chunks" / f"{source}.jsonl"
 
 
-def save_chunks(chunks: list[Chunk], source: str) -> Path:
-    path = chunks_path(source)
+def save_chunks(chunks: list[Chunk], source: str, data_dir: Path) -> Path:
+    path = chunks_path(source, data_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         for c in chunks:
@@ -100,6 +119,6 @@ def save_chunks(chunks: list[Chunk], source: str) -> Path:
     return path
 
 
-def load_chunks(source: str) -> list[Chunk]:
-    with chunks_path(source).open(encoding="utf-8") as f:
+def load_chunks_file(path: Path) -> list[Chunk]:
+    with path.open(encoding="utf-8") as f:
         return [Chunk(**json.loads(line)) for line in f]

@@ -24,19 +24,21 @@ def build_converter() -> DocumentConverter:
     )
 
 
-def parsed_path(pdf: Path) -> Path:
-    return config.PARSED_DIR / f"{pdf.stem}.json"
+def parsed_path(pdf: Path, data_dir: Path) -> Path:
+    return data_dir / "parsed" / f"{pdf.stem}.json"
 
 
-def parse_pdf(converter: DocumentConverter, pdf: Path) -> DoclingDocument:
+def parse_pdf(converter: DocumentConverter, pdf: Path, data_dir: Path) -> DoclingDocument:
     doc = converter.convert(pdf).document
-    out = parsed_path(pdf)
+    out = parsed_path(pdf, data_dir)
     out.parent.mkdir(parents=True, exist_ok=True)
-    img_dir = config.IMAGES_DIR / pdf.stem
+    img_dir = data_dir / "images" / pdf.stem
     img_dir.mkdir(parents=True, exist_ok=True)
     doc.save_as_json(out, artifacts_dir=img_dir, image_mode=ImageRefMode.REFERENCED)
-    return doc
+    # save_as_json writes a copy with file references; the in-memory doc still holds
+    # base64 data URIs. Reload so callers see exactly what a cached load would give.
+    return load_parsed(pdf, data_dir)
 
 
-def load_parsed(pdf: Path) -> DoclingDocument:
-    return DoclingDocument.load_from_json(parsed_path(pdf))
+def load_parsed(pdf: Path, data_dir: Path) -> DoclingDocument:
+    return DoclingDocument.load_from_json(parsed_path(pdf, data_dir))
