@@ -9,7 +9,7 @@ from collections import Counter
 from pathlib import Path
 
 CHUNKS = Path(__file__).resolve().parents[1] / "data" / "chunks"
-sys.stdout.reconfigure(encoding="utf-8")
+sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
 
 
 def main(n_samples: int = 3, seed: int = 0) -> None:

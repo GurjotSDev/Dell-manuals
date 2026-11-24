@@ -4,11 +4,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MANUALS_DIR = ROOT / "Manuals"
+# Index output: parsed/ (Docling JSON), images/ (exported pictures), chunks/ (JSONL),
+# manifest.json (PDF hashes for incremental indexing).
 DATA_DIR = ROOT / "data"
-PARSED_DIR = DATA_DIR / "parsed"  # Docling JSON per manual
-IMAGES_DIR = DATA_DIR / "images"  # exported pictures per manual
-CHUNKS_DIR = DATA_DIR / "chunks"  # chunk JSONL per manual
-MANIFEST_PATH = DATA_DIR / "manifest.json"  # file hashes for incremental indexing
 
 # Embedding: Ollama model + matching HF tokenizer (used to size chunks).
 EMBED_MODEL = "qwen3-embedding:0.6b"
