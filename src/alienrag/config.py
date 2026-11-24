@@ -16,4 +16,6 @@ CHUNK_MAX_TOKENS = 512
 GEN_MODEL = "frob/qwen3.5-instruct:9b"
 GEN_NUM_CTX = 16384
 
+RETRIEVE_K = 6  # chunks retrieved per question (hybrid search, product-filtered)
+
 IMAGES_SCALE = 2.0  # render scale for exported pictures

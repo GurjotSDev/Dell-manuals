@@ -24,8 +24,12 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture(scope="session")
-def chunks():
-    index(MANUALS, TEST_DATA, rechunk=True)
+def rechunk_report():
+    return index(MANUALS, TEST_DATA, rechunk=True)
+
+
+@pytest.fixture(scope="session")
+def chunks(rechunk_report):
     return load_all_chunks(TEST_DATA)
 
 
@@ -85,6 +89,12 @@ def test_reindexing_unchanged_manuals_does_nothing(chunks):
     assert report.actions
     assert set(report.actions.values()) == {"skipped"}
     assert report.chunk_counts == {}
+    assert report.embedded == {}
+
+
+def test_rechunked_manuals_are_re_embedded_in_full(rechunk_report, chunks):
+    per_manual = {f"{s}.pdf": sum(c.source == s for c in chunks) for s in {c.source for c in chunks}}
+    assert rechunk_report.embedded == per_manual
 
 
 def test_manuals_removed_from_the_folder_are_removed_from_the_index(chunks):
