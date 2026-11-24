@@ -19,7 +19,7 @@ A fully local retrieval-augmented generation (RAG) system that answers questions
 | Images | Exported and linked to page/chunk. VLM captions (`gemma4:12b`) are an optional, toggleable ingest stage, kept only if eval shows a gain |
 | Embedder | `qwen3-embedding:0.6b` via Ollama (fallback upgrade: `qwen3-embedding:4b`) |
 | Vector store | LanceDB, hybrid search (BM25 + vector). Reranker only if eval demands it |
-| Generator | `qwen3:4b-instruct` via Ollama, 16k context; model name configurable |
+| Generator | `frob/qwen3.5-instruct` (9b tag) via Ollama, 16k context; model name configurable |
 | Framework | Hand-rolled (`ollama` client + LanceDB), no LangChain/LlamaIndex |
 | UI | CLI first, then a Gradio front-end |
 | Git | `Manuals/` and `data/` (index, exported images) are gitignored |

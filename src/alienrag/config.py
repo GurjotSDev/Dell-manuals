@@ -13,7 +13,7 @@ EMBED_MODEL = "qwen3-embedding:0.6b"
 EMBED_TOKENIZER = "Qwen/Qwen3-Embedding-0.6B"
 CHUNK_MAX_TOKENS = 512
 
-GEN_MODEL = "qwen3:4b-instruct"
+GEN_MODEL = "frob/qwen3.5-instruct:9b"
 GEN_NUM_CTX = 16384
 
 RETRIEVE_K = 6  # chunks retrieved per question (hybrid search, product-filtered)
