@@ -6,7 +6,7 @@ from alienrag import config
 
 
 def index_main() -> None:
-    ap = argparse.ArgumentParser(description="Parse and chunk manuals in Manuals/.")
+    ap = argparse.ArgumentParser(description="Parse, chunk and embed manuals in Manuals/.")
     ap.add_argument("--force", action="store_true", help="re-parse even if unchanged")
     ap.add_argument("--rechunk", action="store_true", help="re-chunk from cached parses")
     args = ap.parse_args()
@@ -17,4 +17,21 @@ def index_main() -> None:
 
 
 def ask_main() -> None:
-    raise SystemExit("ask: not implemented yet (build step 4)")
+    ap = argparse.ArgumentParser(description="Ask a question about an Alienware computer.")
+    ap.add_argument("question")
+    ap.add_argument(
+        "--product", required=True, help="device model code, e.g. act1250 or r16"
+    )
+    args = ap.parse_args()
+
+    from alienrag.answer import Session, UnknownDevice, answer
+
+    try:
+        result = answer(args.question, Session(devices=[args.product.lower()]))
+    except UnknownDevice as e:
+        raise SystemExit(f"ask: {e}")
+    print(result.text.strip())
+    if result.citations:
+        print("\nSources:")
+        for c in result.citations:
+            print(f"  {c.source}.pdf, page {c.page}")

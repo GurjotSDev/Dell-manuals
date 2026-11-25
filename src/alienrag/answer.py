@@ -1,0 +1,113 @@
+"""The answer seam: question + session -> cited Answer."""
+
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal
+
+import ollama
+
+from alienrag import config, store
+
+Status = Literal["answered"]  # later: refused, needs-device, needs-config-clarification
+
+
+@dataclass
+class Session:
+    devices: list[str] = field(default_factory=list)  # product model codes, e.g. "act1250"
+
+
+@dataclass
+class Citation:
+    source: str  # manual file stem
+    page: int
+
+
+@dataclass
+class Answer:
+    devices: list[str]
+    status: Status
+    chunks: list[store.Hit]
+    text: str
+    citations: list[Citation]
+
+
+SYSTEM_PROMPT = """You answer questions about Alienware computers using ONLY the manual passages provided. Never use outside knowledge.
+
+Each passage starts with a header like [ACT1250 p.54-55] giving the device and its pages.
+Rules:
+- Cite every claim with the device and a single page number in square brackets, exactly like [ACT1250 p.54]. Cite only devices and pages that appear in passage headers.
+- For a removal or installation procedure, give the prerequisites, then the steps as a numbered list in the manual's order, and include every WARNING and CAUTION attached to it.
+- If the passages do not contain the answer, say it is not found in the manuals."""
+
+
+def _label(product: str) -> str:
+    return product.upper()
+
+
+def _page_span(pages: list[int]) -> str:
+    return f"p.{pages[0]}" if len(pages) == 1 else f"p.{pages[0]}-{pages[-1]}"
+
+
+def _context(hits: list[store.Hit]) -> str:
+    return "\n\n".join(
+        f"[{_label(h.product)} {_page_span(h.pages)}] {' > '.join(h.headings)}\n{h.text}"
+        for h in hits
+    )
+
+
+# [ACT1250 p.54], [ACT1250 p. 54-55], [ACT1250 p.54, p.55], [ACT1250 pp. 54, 55]
+_CITE = re.compile(r"\[\s*([A-Za-z0-9]+)\s+((?:pp?\.?\s*\d+(?:\s*[-–,]\s*(?:p\.?\s*)?\d+)*))\s*\]")
+
+
+def _citations(text: str, hits: list[store.Hit]) -> list[Citation]:
+    """Citations in `text`, in order, de-duplicated. Labels map to manuals via the hits;
+    an unknown label is kept verbatim as the source so bad citations stay visible."""
+    sources = {_label(h.product): h.source for h in hits}
+    out: list[Citation] = []
+    for m in _CITE.finditer(text):
+        source = sources.get(m.group(1).upper(), m.group(1))
+        nums: list[int] = []
+        for lo, hi in re.findall(r"(\d+)(?:\s*[-–]\s*(\d+))?", m.group(2)):
+            nums.extend(range(int(lo), int(hi or lo) + 1))
+        for n in nums:
+            c = Citation(source, n)
+            if c not in out:
+                out.append(c)
+    return out
+
+
+def _generate(question: str, hits: list[store.Hit]) -> str:
+    resp = ollama.chat(
+        model=config.GEN_MODEL,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": f"Manual passages:\n\n{_context(hits)}\n\nQuestion: {question}",
+            },
+        ],
+        options={"num_ctx": config.GEN_NUM_CTX, "temperature": 0},
+    )
+    return resp.message.content or ""
+
+
+class UnknownDevice(ValueError):
+    """The session names no device, or one with no manual in the index."""
+
+
+def answer(question: str, session: Session, *, data_dir: Path = config.DATA_DIR) -> Answer:
+    devices = list(session.devices)
+    known = store.products(data_dir)
+    if not devices or not set(devices) <= known:
+        unknown = ", ".join(sorted(set(devices) - known)) or "none given"
+        raise UnknownDevice(f"unknown device ({unknown}); known: {', '.join(sorted(known))}")
+    hits = store.search(data_dir, question, devices, k=config.RETRIEVE_K)
+    text = _generate(question, hits)
+    return Answer(
+        devices=devices,
+        status="answered",
+        chunks=hits,
+        text=text,
+        citations=_citations(text, hits),
+    )
