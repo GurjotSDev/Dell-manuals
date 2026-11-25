@@ -71,6 +71,7 @@ def index(
     *,
     force: bool = False,
     rechunk: bool = False,
+    aliases_file: Path | None = config.ALIASES_FILE,
     log=print,
 ) -> IndexReport:
     """Parse, chunk and embed every PDF in `manuals_dir` into `data_dir`.
@@ -79,9 +80,11 @@ def index(
     parse when the chunker changed (or `rechunk`), and otherwise skipped. Chunks are
     re-embedded into the hybrid-search store only when they were re-chunked, the embedder
     changed, or the store lacks them. Outputs of PDFs no longer in `manuals_dir` are removed.
+    The device registry is rebuilt every run from the PDFs present and `aliases_file`.
     """
     from alienrag import store
     from alienrag.chunk import build_chunker, chunk_document, chunks_path, save_chunks
+    from alienrag.registry import build_registry
     from alienrag.parse import build_converter, load_parsed, parse_pdf, parsed_path
     from alienrag.structure import repair_headings
 
@@ -151,6 +154,8 @@ def index(
         log(f"[embed] {pdf.name}: {len(chunks)} chunks in {time.perf_counter() - t:.0f}s")
         entry["embedder"] = embed_sig
         _write_manifest(manifest_path, manifest)
+
+    build_registry(pdfs, data_dir, aliases_file)
 
     # Also rebuild when missing, e.g. a previous run died between embedding and here.
     if report.embedded or "removed" in report.actions.values() or not store.has_fts(data_dir):

@@ -7,6 +7,9 @@ MANUALS_DIR = ROOT / "Manuals"
 # Index output: parsed/ (Docling JSON), images/ (exported pictures), chunks/ (JSONL),
 # manifest.json (PDF hashes for incremental indexing).
 DATA_DIR = ROOT / "data"
+# Hand-editable device nicknames, merged into the device registry at index time:
+# {"<model code>": ["alias", ...]}.
+ALIASES_FILE = ROOT / "aliases.json"
 
 # Embedding: Ollama model + matching HF tokenizer (used to size chunks).
 EMBED_MODEL = "qwen3-embedding:0.6b"

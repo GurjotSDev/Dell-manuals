@@ -11,21 +11,12 @@ import pyarrow as pa
 
 from alienrag import config
 from alienrag.chunk import Chunk
+from alienrag.registry import model_code
 
 TABLE = "chunks"
 EMBED_BATCH = 32
 # Qwen3-Embedding is instruction-aware: queries carry a task prefix, documents don't.
 QUERY_INSTRUCTION = "Given a question about a computer, retrieve owner's manual passages that answer it"
-
-
-def product_of(source: str) -> str:
-    """Model code of a manual, from its file stem: the token before "owners".
-
-    "act1250-owners-manual-en-us" -> "act1250", "alienware-aurora-r16-owners-manual-en-us" -> "r16".
-    """
-    tokens = source.lower().split("-")
-    i = tokens.index("owners") if "owners" in tokens else len(tokens)
-    return tokens[i - 1] if i > 0 else source.lower()
 
 
 @dataclass
@@ -73,7 +64,7 @@ def replace_source(data_dir: Path, source: str, chunks: list[Chunk]) -> int:
         {
             "id": c.id,
             "source": c.source,
-            "product": product_of(c.source),
+            "product": model_code(c.source),
             "text": c.text,
             "embed_text": c.embed_text,
             "headings": c.headings,
@@ -131,13 +122,6 @@ def count(data_dir: Path) -> dict[str, int]:
     if tbl is None:
         return {}
     return dict(Counter(tbl.search().select(["source"]).to_arrow().column("source").to_pylist()))
-
-
-def products(data_dir: Path) -> set[str]:
-    tbl = _open(data_dir)
-    if tbl is None:
-        return set()
-    return set(tbl.search().select(["product"]).to_arrow().column("product").to_pylist())
 
 
 def _fts_text(query: str) -> str:

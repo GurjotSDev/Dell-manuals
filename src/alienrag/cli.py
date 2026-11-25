@@ -20,16 +20,21 @@ def ask_main() -> None:
     ap = argparse.ArgumentParser(description="Ask a question about an Alienware computer.")
     ap.add_argument("question")
     ap.add_argument(
-        "--product", required=True, help="device model code, e.g. act1250 or r16"
+        "--product",
+        action="append",
+        help="force the device by model code, e.g. act1250 or r16 (repeatable); "
+        "by default the device is worked out from the question",
     )
     args = ap.parse_args()
 
     from alienrag.answer import Session, UnknownDevice, answer
 
     try:
-        result = answer(args.question, Session(devices=[args.product.lower()]))
+        result = answer(args.question, Session(devices=args.product or []))
     except UnknownDevice as e:
         raise SystemExit(f"ask: {e}")
+    if result.devices:
+        print(" / ".join(d.name for d in result.devices) + "\n")
     print(result.text.strip())
     if result.citations:
         print("\nSources:")

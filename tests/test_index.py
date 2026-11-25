@@ -17,6 +17,7 @@ from alienrag.parse import load_parsed
 ROOT = Path(__file__).resolve().parents[1]
 MANUALS = ROOT / "Manuals"
 TEST_DATA = ROOT / "data" / "test-index"
+ALIASES = ROOT / "tests" / "aliases.json"
 
 pytestmark = pytest.mark.skipif(
     not any(MANUALS.glob("*.pdf")), reason="no manual PDFs in Manuals/"
@@ -25,7 +26,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="session")
 def rechunk_report():
-    return index(MANUALS, TEST_DATA, rechunk=True)
+    return index(MANUALS, TEST_DATA, rechunk=True, aliases_file=ALIASES)
 
 
 @pytest.fixture(scope="session")
@@ -85,7 +86,7 @@ def test_every_table_cell_is_in_a_chunk(chunks):
 
 
 def test_reindexing_unchanged_manuals_does_nothing(chunks):
-    report = index(MANUALS, TEST_DATA, log=lambda *_: None)
+    report = index(MANUALS, TEST_DATA, aliases_file=ALIASES, log=lambda *_: None)
     assert report.actions
     assert set(report.actions.values()) == {"skipped"}
     assert report.chunk_counts == {}
@@ -111,7 +112,7 @@ def test_manuals_removed_from_the_folder_are_removed_from_the_index(chunks):
         encoding="utf-8",
     )
 
-    report = index(MANUALS, TEST_DATA, log=lambda *_: None)
+    report = index(MANUALS, TEST_DATA, aliases_file=ALIASES, log=lambda *_: None)
 
     assert report.actions["gone.pdf"] == "removed"
     assert "gone" not in {c.source for c in load_all_chunks(TEST_DATA)}
@@ -130,3 +131,23 @@ def test_every_chunk_has_source_page_and_heading_path(chunks):
         assert c.source in sources
         assert c.pages, f"{c.id} has no pages"
         assert c.headings, f"{c.id} has no heading path"
+
+
+def test_registry_has_each_manuals_model_code_and_title_page_name(rechunk_report):
+    from alienrag.registry import load_registry
+
+    devices = {d.id: d for d in load_registry(TEST_DATA)}
+    assert devices["act1250"].name == "Alienware Aurora ACT1250"
+    assert devices["act1250"].source == "act1250-owners-manual-en-us"
+    assert devices["r16"].name == "Alienware Aurora R16"
+    assert devices["r16"].source == "alienware-aurora-r16-owners-manual-en-us"
+    # One device per PDF, so a newly added manual is registered with no manual setup.
+    assert sorted(d.source for d in devices.values()) == sorted(p.stem for p in MANUALS.glob("*.pdf"))
+
+
+def test_registry_merges_aliases_from_the_alias_file(rechunk_report):
+    from alienrag.registry import load_registry
+
+    devices = {d.id: d for d in load_registry(TEST_DATA)}
+    assert devices["act1250"].aliases == ["the beast", "my aurora"]
+    assert devices["r16"].aliases == ["old rig", "my aurora"]  # alias file keys are case-insensitive

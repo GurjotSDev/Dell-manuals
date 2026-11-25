@@ -8,13 +8,18 @@ from typing import Literal
 import ollama
 
 from alienrag import config, store
+from alienrag.registry import Device, load_registry
+from alienrag.resolve import UnknownDevice, resolve
 
-Status = Literal["answered"]  # later: refused, needs-device, needs-config-clarification
+__all__ = ["Answer", "Citation", "Session", "UnknownDevice", "answer"]
+
+Status = Literal["answered", "needs-device"]  # later: refused, needs-config-clarification
 
 
 @dataclass
 class Session:
-    devices: list[str] = field(default_factory=list)  # product model codes, e.g. "act1250"
+    # Forced device set (model codes, e.g. "act1250"); empty means resolve from the question.
+    devices: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -25,7 +30,7 @@ class Citation:
 
 @dataclass
 class Answer:
-    devices: list[str]
+    devices: list[Device]
     status: Status
     chunks: list[store.Hit]
     text: str
@@ -38,6 +43,7 @@ Each passage starts with a header like [ACT1250 p.54-55] giving the device and i
 Rules:
 - Cite every claim with the device and a single page number in square brackets, exactly like [ACT1250 p.54]. Cite only devices and pages that appear in passage headers.
 - For a removal or installation procedure, give the prerequisites, then the steps as a numbered list in the manual's order, and include every WARNING and CAUTION attached to it.
+- Refer to each device by its full name as given in the device list, never by its label alone.
 - If the passages do not contain the answer, say it is not found in the manuals."""
 
 
@@ -77,14 +83,18 @@ def _citations(text: str, hits: list[store.Hit]) -> list[Citation]:
     return out
 
 
-def _generate(question: str, hits: list[store.Hit]) -> str:
+def _device_list(devices: list[Device]) -> str:
+    return "\n".join(f"- {d.name} (label {_label(d.id)})" for d in devices)
+
+
+def _generate(question: str, devices: list[Device], hits: list[store.Hit]) -> str:
     resp = ollama.chat(
         model=config.GEN_MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
-                "content": f"Manual passages:\n\n{_context(hits)}\n\nQuestion: {question}",
+                "content": f"Devices:\n{_device_list(devices)}\n\nManual passages:\n\n{_context(hits)}\n\nQuestion: {question}",
             },
         ],
         options={"num_ctx": config.GEN_NUM_CTX, "temperature": 0},
@@ -92,18 +102,22 @@ def _generate(question: str, hits: list[store.Hit]) -> str:
     return resp.message.content or ""
 
 
-class UnknownDevice(ValueError):
-    """The session names no device, or one with no manual in the index."""
+def _which_device(registry: list[Device]) -> str:
+    names = "\n".join(f"- {d.name} ({d.id})" for d in registry)
+    return f"Which device is your question about? I have manuals for:\n{names}"
 
 
 def answer(question: str, session: Session, *, data_dir: Path = config.DATA_DIR) -> Answer:
-    devices = list(session.devices)
-    known = store.products(data_dir)
-    if not devices or not set(devices) <= known:
-        unknown = ", ".join(sorted(set(devices) - known)) or "none given"
-        raise UnknownDevice(f"unknown device ({unknown}); known: {', '.join(sorted(known))}")
-    hits = store.search(data_dir, question, devices, k=config.RETRIEVE_K)
-    text = _generate(question, hits)
+    registry = load_registry(data_dir)
+    if not registry:
+        raise RuntimeError(f"no device registry in {data_dir}; run `index` first")
+    devices = resolve(question, session.devices, registry)
+    if not devices:
+        return Answer(
+            devices=[], status="needs-device", chunks=[], text=_which_device(registry), citations=[]
+        )
+    hits = store.search(data_dir, question, [d.id for d in devices], k=config.RETRIEVE_K)
+    text = _generate(question, devices, hits)
     return Answer(
         devices=devices,
         status="answered",
