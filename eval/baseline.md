@@ -7,6 +7,28 @@
 Run with `uv run eval` (add `--answers` to print each answer next to the expected one
 for spot-checking; `--data-dir` to point at another index).
 
+## 2026-11-25: after #8 (conversational session) — current baseline
+
+Same models, index and `RETRIEVE_K` as below, plus #8: questions with first-person
+words ("my", "I", "mine") are rewritten into a standalone query before retrieval.
+
+| Metric | Result |
+| --- | --- |
+| Device-resolution accuracy | 23/23 (100%) |
+| Retrieval page-hit@5 | 15/16 (94%) |
+| Correct-refusal rate | 0/4 (0%), false refusals: 0 |
+
+Failures:
+
+- `cmp-gpu-length` (comparison): got ACT1250 pages 23, 26, 27, 61 and no R16 chunk in
+  the top 5. Comparison retrieval still isn't balanced per device.
+- `nim-*` (all four not-in-manual questions): status `answered`, expected `refused`.
+  Still 0% by construction until a `refused` status exists.
+
+`cfg-act1250-cpu-cooler-removal` now passes: both the air-cooler and the liquid-cooler
+removal pages are in the top 5. The question says "my", so it goes through the #8
+rewrite. One run can't separate that from run-to-run variation in retrieval.
+
 ## 2026-11-25: first baseline
 
 Pipeline as of #4 (device registry + resolution), on top of the #3 tracer bullet:
