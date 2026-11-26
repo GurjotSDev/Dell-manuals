@@ -92,20 +92,16 @@ def eval_main() -> None:
     args = ap.parse_args()
 
     from alienrag.answer import Answer, Session, answer
-    from alienrag.evaluation import evaluate, format_report, load_golden
+    from alienrag.evaluation import EvalItem, evaluate, format_report, load_golden
 
     items = load_golden(args.golden)
-    expected = {i.question: i for i in items}
-    done = 0
 
-    def ask(question: str) -> Answer:
-        nonlocal done
-        done += 1
-        print(f"[{done}/{len(items)}] {expected[question].id}", file=sys.stderr, flush=True)
-        a = answer(question, Session(), data_dir=args.data_dir)
+    def ask(item: EvalItem) -> Answer:
+        print(f"[{items.index(item) + 1}/{len(items)}] {item.id}", file=sys.stderr, flush=True)
+        a = answer(item.question, Session(), data_dir=args.data_dir)  # fresh session each
         if args.answers:
-            print(f"\n=== {expected[question].id}: {question}\nstatus: {a.status}")
-            print(f"expected: {expected[question].answer}\n--- got:\n{a.text.strip()}\n")
+            print(f"\n=== {item.id}: {item.question}\nstatus: {a.status}")
+            print(f"expected: {item.answer}\n--- got:\n{a.text.strip()}\n")
         return a
 
     report = evaluate(items, ask)

@@ -18,10 +18,11 @@ CATEGORIES = (
     "configuration-dependent",
     "not-in-manual",
 )
-# Answer statuses, including ones the pipeline doesn't produce yet (refusal is a later
-# issue), so the eval set can already expect them.
+# Answer statuses from the spec, including ones the pipeline doesn't produce yet
+# (refusal is a later issue), so the eval set can already expect them.
 STATUSES = ("answered", "refused", "needs-device", "needs-config-clarification")
 REFUSED = "refused"
+HIT_AT = 5  # page-hit@5: only the top 5 retrieved chunks count
 
 
 @dataclass
@@ -30,7 +31,10 @@ class EvalItem:
     category: str
     question: str
     devices: list[str]  # expected model codes; empty for a no-device question
-    pages: dict[str, list[int]]  # model code -> pages that answer it; empty when none do
+    # model code -> page groups that answer it, e.g. one group per configuration
+    # ({"act1250": [[81, 82], [83, 84]]}); every group must be retrieved. Empty when
+    # the manuals don't answer the question.
+    pages: dict[str, list[list[int]]]
     status: str  # expected Answer.status
     answer: str  # expected answer, for the user's spot-check only
     reviewed: bool = False  # the user has verified this item against the manual
@@ -73,41 +77,39 @@ class Report:
     failures: list[Failure] = field(default_factory=list)
 
 
-HIT_AT = 5
-
-
-def _page_hit(expected: dict[str, list[int]], got: Answer) -> bool:
-    """Every device with expected pages has one of them in a top-5 chunk of its manual."""
-    top = got.chunks[:HIT_AT]
-    return all(
-        any(c.product == device and set(c.pages) & set(pages) for c in top)
-        for device, pages in expected.items()
-    )
-
-
-def _ids(ids: list[str]) -> str:
-    return " + ".join(sorted(ids)) or "none"
-
-
-def _pages(by_device: dict[str, list[int]]) -> str:
-    return "; ".join(
-        f"{d} p.{','.join(map(str, ps))}" for d, ps in by_device.items()
-    ) or "none"
-
-
-def _top_pages(got: Answer) -> dict[str, list[int]]:
-    out: dict[str, list[int]] = {}
+def _top_pages(got: Answer) -> dict[str, set[int]]:
+    """Pages of the top-5 chunks, per device."""
+    out: dict[str, set[int]] = {}
     for c in got.chunks[:HIT_AT]:
-        out.setdefault(c.product, [])
-        out[c.product] += [p for p in c.pages if p not in out[c.product]]
+        out.setdefault(c.product, set()).update(c.pages)
     return out
 
 
-def evaluate(items: list[EvalItem], ask: Callable[[str], Answer]) -> Report:
+def _page_hit(expected: dict[str, list[list[int]]], top: dict[str, set[int]]) -> bool:
+    """Every expected page group has a page in a top-5 chunk of its device's manual."""
+    return all(
+        top.get(device, set()) & set(group)
+        for device, groups in expected.items()
+        for group in groups
+    )
+
+
+def _fmt_ids(ids: list[str]) -> str:
+    return " + ".join(sorted(ids)) or "none"
+
+
+def _fmt_pages(by_device: dict[str, list[list[int]]]) -> str:
+    return "; ".join(
+        f"{d} " + " & ".join("p." + ",".join(map(str, g)) for g in groups)
+        for d, groups in by_device.items()
+    ) or "none"
+
+
+def evaluate(items: list[EvalItem], ask: Callable[[EvalItem], Answer]) -> Report:
     """Ask every item's question and score the answers."""
     report = Report()
     for it in items:
-        got = ask(it.question)
+        got = ask(it)
         reasons: list[str] = []
 
         got_ids = [d.id for d in got.devices]
@@ -115,14 +117,18 @@ def evaluate(items: list[EvalItem], ask: Callable[[str], Answer]) -> Report:
         if set(got_ids) == set(it.devices):
             report.devices.correct += 1
         else:
-            reasons.append(f"devices: expected {_ids(it.devices)}, got {_ids(got_ids)}")
+            reasons.append(f"devices: expected {_fmt_ids(it.devices)}, got {_fmt_ids(got_ids)}")
 
         if it.pages:
             report.pages.total += 1
-            if _page_hit(it.pages, got):
+            top = _top_pages(got)
+            if _page_hit(it.pages, top):
                 report.pages.correct += 1
             else:
-                reasons.append(f"pages@{HIT_AT}: expected {_pages(it.pages)}, got {_pages(_top_pages(got))}")
+                got_pages = {d: [sorted(ps)] for d, ps in top.items()}
+                reasons.append(
+                    f"pages@{HIT_AT}: expected {_fmt_pages(it.pages)}, got {_fmt_pages(got_pages)}"
+                )
 
         if it.status == REFUSED:
             report.refusals.total += 1
@@ -137,15 +143,15 @@ def evaluate(items: list[EvalItem], ask: Callable[[str], Answer]) -> Report:
     return report
 
 
-def _rate(r: Rate) -> str:
+def _fmt_rate(r: Rate) -> str:
     return f"{r.correct}/{r.total} ({r.correct / r.total:.0%})" if r.total else "n/a"
 
 
 def format_report(report: Report) -> str:
     lines = [
-        f"Device-resolution accuracy: {_rate(report.devices)}",
-        f"Retrieval page-hit@{HIT_AT}: {_rate(report.pages)}",
-        f"Correct-refusal rate: {_rate(report.refusals)}, false refusals: {report.false_refusals}",
+        f"Device-resolution accuracy: {_fmt_rate(report.devices)}",
+        f"Retrieval page-hit@{HIT_AT}: {_fmt_rate(report.pages)}",
+        f"Correct-refusal rate: {_fmt_rate(report.refusals)}, false refusals: {report.false_refusals}",
         "",
     ]
     if not report.failures:

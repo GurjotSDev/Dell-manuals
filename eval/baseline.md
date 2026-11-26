@@ -17,14 +17,22 @@ Index: both manuals (ACT1250, R16), built by `index`.
 | Metric | Result |
 | --- | --- |
 | Device-resolution accuracy | 23/23 (100%) |
-| Retrieval page-hit@5 | 15/16 (94%) |
+| Retrieval page-hit@5 | 14/16 (88%) |
 | Correct-refusal rate | 0/4 (0%), false refusals: 0 |
+
+Page-hit@5 counts an item as a hit only when, for every expected device, every expected
+page group has a page in one of the top 5 retrieved chunks from that device's manual.
+Configuration-dependent procedures have one group per configuration, so finding only
+one variant counts as a miss.
 
 Failures:
 
 - `cmp-gpu-length` (comparison): the top 5 chunks were all from the ACT1250 manual, so
   the R16's graphics-card dimensions (p.61) were never retrieved and the answer said the
   R16 manual doesn't cover it. Comparison retrieval isn't balanced per device yet.
+- `cfg-act1250-cpu-cooler-removal` (configuration-dependent): the liquid-cooler removal
+  (p.83-84) was retrieved but the air-cooler removal (p.81-82) was not, so the answer
+  can't present both configurations.
 - `nim-*` (all four not-in-manual questions): status `answered`, expected `refused`.
   The pipeline has no `refused` status yet, so this rate is 0% by construction. The
   answer text did say the information isn't in the manuals in all four cases (prose,

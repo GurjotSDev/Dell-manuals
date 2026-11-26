@@ -20,7 +20,7 @@ DEVICES = {
 def item(
     id: str,
     devices: list[str],
-    pages: dict[str, list[int]] | None = None,
+    pages: dict[str, list[list[int]]] | None = None,
     status: str = "answered",
     category: str = "single-device",
 ) -> EvalItem:
@@ -59,8 +59,8 @@ def reply(devices: list[str], status: str = "answered", chunks: list[Hit] | None
 
 
 def run(pairs: list[tuple[EvalItem, Answer]]):
-    answers = {i.question: a for i, a in pairs}
-    return evaluate([i for i, _ in pairs], lambda q: answers[q])
+    answers = {i.id: a for i, a in pairs}
+    return evaluate([i for i, _ in pairs], lambda it: answers[it.id])
 
 
 def test_device_resolution_accuracy_counts_exact_device_set_matches():
@@ -80,11 +80,11 @@ def test_page_hit_at_5_needs_an_expected_page_in_the_top_five_chunks():
     report = run(
         [
             # hit at rank 1
-            (item("a", ["act1250"], {"act1250": [54, 55]}), reply(["act1250"], chunks=[hit("act1250", [55, 56])])),
+            (item("a", ["act1250"], {"act1250": [[54, 55]]}), reply(["act1250"], chunks=[hit("act1250", [55, 56])])),
             # right page, but only at rank 6
-            (item("b", ["act1250"], {"act1250": [54]}), reply(["act1250"], chunks=[*filler, hit("act1250", [54])])),
+            (item("b", ["act1250"], {"act1250": [[54]]}), reply(["act1250"], chunks=[*filler, hit("act1250", [54])])),
             # right page number, wrong manual
-            (item("c", ["act1250"], {"act1250": [22]}), reply(["act1250"], chunks=[hit("r16", [22])])),
+            (item("c", ["act1250"], {"act1250": [[22]]}), reply(["act1250"], chunks=[hit("r16", [22])])),
             # no expected pages (e.g. not in the manuals): not scored
             (item("d", ["r16"], status="refused"), reply(["r16"])),
         ]
@@ -93,11 +93,23 @@ def test_page_hit_at_5_needs_an_expected_page_in_the_top_five_chunks():
 
 
 def test_page_hit_at_5_for_a_comparison_needs_a_hit_for_every_device():
-    pages = {"act1250": [22], "r16": [23]}
+    pages = {"act1250": [[22]], "r16": [[23]]}
     report = run(
         [
             (item("both", ["act1250", "r16"], pages), reply(["act1250", "r16"], chunks=[hit("act1250", [22]), hit("r16", [23])])),
             (item("one", ["act1250", "r16"], pages), reply(["act1250", "r16"], chunks=[hit("act1250", [22]), hit("r16", [90])])),
+        ]
+    )
+    assert (report.pages.correct, report.pages.total) == (1, 2)
+
+
+def test_page_hit_at_5_needs_every_page_group_so_each_configuration_is_retrieved():
+    # air-cooler procedure on 81-82, liquid-cooler procedure on 83-84
+    pages = {"act1250": [[81, 82], [83, 84]]}
+    report = run(
+        [
+            (item("both", ["act1250"], pages), reply(["act1250"], chunks=[hit("act1250", [83, 84]), hit("act1250", [81, 82])])),
+            (item("air-only", ["act1250"], pages), reply(["act1250"], chunks=[hit("act1250", [81, 82])])),
         ]
     )
     assert (report.pages.correct, report.pages.total) == (1, 2)
@@ -108,8 +120,8 @@ def test_correct_refusal_rate_counts_refusals_on_questions_the_manuals_dont_answ
         [
             (item("a", ["r16"], status="refused"), reply(["r16"], status="refused")),
             (item("b", ["r16"], status="refused"), reply(["r16"], status="answered")),
-            (item("c", ["act1250"], {"act1250": [54]}), reply(["act1250"], status="refused")),
-            (item("d", ["act1250"], {"act1250": [54]}), reply(["act1250"], status="answered")),
+            (item("c", ["act1250"], {"act1250": [[54]]}), reply(["act1250"], status="refused")),
+            (item("d", ["act1250"], {"act1250": [[54]]}), reply(["act1250"], status="answered")),
         ]
     )
     assert (report.refusals.correct, report.refusals.total) == (1, 2)
@@ -119,9 +131,9 @@ def test_correct_refusal_rate_counts_refusals_on_questions_the_manuals_dont_answ
 def test_failures_list_each_failing_question_with_what_went_wrong():
     report = run(
         [
-            (item("ok", ["act1250"], {"act1250": [54]}), reply(["act1250"], chunks=[hit("act1250", [54])])),
-            (item("wrong-device", ["r16"], {"r16": [57]}), reply(["act1250"], chunks=[hit("act1250", [54])])),
-            (item("page-miss", ["act1250"], {"act1250": [22]}), reply(["act1250"], chunks=[hit("act1250", [54])])),
+            (item("ok", ["act1250"], {"act1250": [[54]]}), reply(["act1250"], chunks=[hit("act1250", [54])])),
+            (item("wrong-device", ["r16"], {"r16": [[57]]}), reply(["act1250"], chunks=[hit("act1250", [54])])),
+            (item("page-miss", ["act1250"], {"act1250": [[22]]}), reply(["act1250"], chunks=[hit("act1250", [54])])),
             (item("no-refusal", ["r16"], status="refused"), reply(["r16"])),
         ]
     )
@@ -135,8 +147,8 @@ def test_failures_list_each_failing_question_with_what_went_wrong():
 def test_printed_report_gives_the_three_metrics_then_each_failure():
     report = run(
         [
-            (item("ok", ["act1250"], {"act1250": [54]}), reply(["act1250"], chunks=[hit("act1250", [54])])),
-            (item("bad", ["r16"], {"r16": [57]}, category="comparison"), reply(["act1250"])),
+            (item("ok", ["act1250"], {"act1250": [[54]]}), reply(["act1250"], chunks=[hit("act1250", [54])])),
+            (item("bad", ["r16"], {"r16": [[57]]}, category="comparison"), reply(["act1250"])),
             (item("refuse", ["r16"], status="refused", category="not-in-manual"), reply(["r16"])),
         ]
     )
