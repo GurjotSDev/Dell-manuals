@@ -45,6 +45,7 @@ def hit(product: str, pages: list[int]) -> Hit:
         pages=pages,
         images=[],
         score=1.0,
+        similarity=1.0,
     )
 
 

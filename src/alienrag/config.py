@@ -23,6 +23,11 @@ GEN_MODEL = "frob/qwen3.5-instruct:9b"
 GEN_NUM_CTX = 16384
 
 RETRIEVE_K = 6  # chunks retrieved per question (hybrid search, product-filtered)
+# Refuse without generating when no retrieved chunk's cosine similarity to the query
+# reaches this: a safety floor below every answerable question measured. Off-topic and
+# answerable questions overlap above it, so the prompt-level refusal does the rest.
+# See eval/baseline.md.
+REFUSE_BELOW = 0.40
 
 SESSION_TURNS = 4  # earlier turns a chat session keeps for rewriting follow-ups
 

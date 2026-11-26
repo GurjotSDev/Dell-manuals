@@ -5,9 +5,11 @@ Shares data/test-index with test_index.py; indexing is a no-op when nothing chan
 
 from pathlib import Path
 
+import ollama
 import pytest
 
-from alienrag.answer import Session, UnknownDevice, answer
+from alienrag import config
+from alienrag.answer import SYSTEM_PROMPT, Session, UnknownDevice, answer
 from alienrag.indexing import index
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,8 +96,8 @@ def test_forcing_an_unknown_device_is_rejected_naming_the_known_ones(indexed):
         ("How many fans does the Alienware Aurora ACT1250 have?", ["act1250"]),
         ("how many fans does my act1250 have", ["act1250"]),
         ("How many fans are in the Aurora R16?", ["r16"]),
-        ("how many fans does the beast have?", ["act1250"]),  # alias from tests/aliases.json
-        ("Old Rig: how many fans?", ["r16"]),
+        ("how many fans does the 1250 have?", ["act1250"]),  # alias from tests/aliases.json
+        ("R-16: how many fans?", ["r16"]),
     ],
 )
 def test_device_named_in_the_question_is_resolved_without_a_flag(indexed, question, expected):
@@ -126,7 +128,7 @@ def test_device_named_in_a_way_no_alias_matches_is_resolved_by_the_llm(indexed):
 
 
 def test_alias_shared_by_two_devices_is_settled_by_a_unique_name(indexed):
-    # "my aurora" is an alias of both devices in tests/aliases.json
+    # "aurora" is an alias of both devices in tests/aliases.json
     a = answer("How many fans does my aurora R16 have?", Session(), data_dir=TEST_DATA)
     assert [d.id for d in a.devices] == ["r16"]
 
@@ -141,3 +143,43 @@ def test_answer_refers_to_the_device_by_its_marketing_name(ask):
     a = ask(MEMORY_Q, "act1250")
     assert [d.name for d in a.devices] == ["Alienware Aurora ACT1250"]
     assert "Alienware Aurora ACT1250" in a.text, a.text
+
+
+def test_question_whose_best_passage_scores_below_the_threshold_is_refused_without_generating(
+    indexed, monkeypatch
+):
+    # Model calls go through (reading "I" in the question still asks the model to rewrite
+    # it) but are recorded, so we can check none of them generated an answer.
+    real_chat = ollama.chat
+    system_prompts = []
+
+    def recording_chat(*args, **kwargs):
+        system_prompts.append(kwargs["messages"][0]["content"])
+        return real_chat(*args, **kwargs)
+
+    monkeypatch.setattr(config, "REFUSE_BELOW", 1.01)  # no passage can reach this
+    monkeypatch.setattr(ollama, "chat", recording_chat)
+    a = answer("How do I install Ubuntu on the ACT1250?", Session(), data_dir=TEST_DATA)
+    assert SYSTEM_PROMPT not in system_prompts, "the generator ran below the threshold"
+    assert a.status == "refused"
+    assert [d.id for d in a.devices] == ["act1250"]
+    assert a.citations == []
+    assert "not found in the manuals" in a.text.lower()
+    assert "full question" in a.text.lower(), a.text  # nothing matched: maybe it was unclear
+
+
+def test_question_the_passages_dont_answer_is_refused_by_the_model(indexed, monkeypatch):
+    monkeypatch.setattr(config, "REFUSE_BELOW", 0.0)  # only the model can refuse
+    a = answer("What is the retail price of the Alienware Aurora ACT1250?", Session(), data_dir=TEST_DATA)
+    assert a.status == "refused", a.text
+    assert a.citations == []
+    assert "not found in the manuals" in a.text.lower()
+
+
+
+def test_answerable_question_with_a_weak_best_match_is_still_answered(ask):
+    # Short questions built around a part number score low (here ~0.52) though the right
+    # passage is retrieved; the threshold must stay below them (see eval/baseline.md).
+    a = ask("What is the CR2032 battery used for?", "act1250")
+    assert a.status == "answered", a.text
+    assert any("CR2032" in c.text for c in a.chunks)
