@@ -1,3 +1,7 @@
+## Sources of truth
+
+Project knowledge lives in GitHub Issues, `prd.md` and `docs/`. `Dell Manuals Vault/` is the user's personal Obsidian notes and is out of date: open it only when the user explicitly asks you to.
+
 ## Agent skills
 
 ### Issue tracker
