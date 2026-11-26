@@ -10,6 +10,9 @@ DATA_DIR = ROOT / "data"
 # Hand-editable device nicknames, merged into the device registry at index time:
 # {"<model code>": ["alias", ...]}.
 ALIASES_FILE = ROOT / "aliases.json"
+# Golden eval set run by `eval`: one question per line with expected devices, pages,
+# status and answer.
+GOLDEN_FILE = ROOT / "eval" / "golden.jsonl"
 
 # Embedding: Ollama model + matching HF tokenizer (used to size chunks).
 EMBED_MODEL = "qwen3-embedding:0.6b"

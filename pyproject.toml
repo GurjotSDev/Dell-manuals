@@ -18,6 +18,7 @@ dependencies = [
 [project.scripts]
 index = "alienrag.cli:index_main"
 ask = "alienrag.cli:ask_main"
+eval = "alienrag.cli:eval_main"
 
 [build-system]
 requires = ["uv_build>=0.13.0,<0.14.0"]
