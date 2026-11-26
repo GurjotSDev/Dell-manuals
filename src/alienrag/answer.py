@@ -14,7 +14,7 @@ from alienrag.session import Session, Turn, read
 
 __all__ = ["Answer", "Citation", "Session", "UnknownDevice", "answer"]
 
-Status = Literal["answered", "needs-device"]  # later: refused, needs-config-clarification
+Status = Literal["answered", "needs-device", "refused"]  # later: needs-config-clarification
 
 
 @dataclass
@@ -43,7 +43,7 @@ Rules:
 - For a removal or installation procedure, give the prerequisites, then the steps as a numbered list in the manual's order, and include every WARNING and CAUTION attached to it.
 - Refer to each device by its full name as given in the device list, never by its label alone.
 - If the user's configuration is given and the manual differs by configuration, answer for the user's configuration.
-- If the passages do not contain the answer, say it is not found in the manuals."""
+- If the passages answer no part of the question, reply with exactly "Not found in the manuals." and nothing else. If they answer only part of it (for example one device of a comparison), answer that part and say which part the manuals don't cover."""
 
 
 def _label(product: str) -> str:
@@ -114,6 +114,21 @@ def _generate(
     return resp.message.content or ""
 
 
+NOT_FOUND = "Not found in the manuals."
+# Below the retrieval threshold nothing matched at all: the question may be off-topic or
+# too vague to search for, so suggest rephrasing.
+NOT_FOUND_OR_UNCLEAR = (
+    "Not found in the manuals, or the question wasn't clear enough to search for. "
+    "Try asking it as a full question."
+)
+
+
+def _refuses(text: str) -> bool:
+    """The generator declined: its whole reply is the refusal the prompt asks for. A reply
+    that says more (a partial answer naming what isn't covered) is an answer."""
+    return text.strip(" \t\n*_\"'.").lower() == NOT_FOUND.lower().rstrip(".")
+
+
 def _which_device(registry: list[Device]) -> str:
     names = "\n".join(f"- {d.name} ({d.id})" for d in registry)
     return f"Which device is your question about? I have manuals for:\n{names}"
@@ -156,14 +171,20 @@ def answer(question: str, session: Session, *, data_dir: Path = config.DATA_DIR)
         )
     else:
         hits = store.search(data_dir, query, [d.id for d in devices], k=config.RETRIEVE_K)
-        text = _generate(question, query, devices, hits, session.configuration)
         session.active = [d.id for d in devices]
+        if max((h.similarity for h in hits), default=0.0) < config.REFUSE_BELOW:
+            text, refused = NOT_FOUND_OR_UNCLEAR, True  # refused without generating
+        else:
+            text = _generate(question, query, devices, hits, session.configuration)
+            refused = _refuses(text)
+            if refused:
+                text = NOT_FOUND  # drop the model's formatting around it
         result = Answer(
             devices=devices,
-            status="answered",
+            status="refused" if refused else "answered",
             chunks=hits,
             text=text,
-            citations=_citations(text, hits),
+            citations=[] if refused else _citations(text, hits),
             query=query,
         )
     session.remember(Turn(question, result.text))

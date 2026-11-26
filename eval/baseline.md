@@ -7,7 +7,57 @@
 Run with `uv run eval` (add `--answers` to print each answer next to the expected one
 for spot-checking; `--data-dir` to point at another index).
 
-## 2026-11-25: after #8 (conversational session) — current baseline
+## 2026-11-25: after #6 (refusal) — current baseline
+
+Same models, index and `RETRIEVE_K` as below, plus #6: two refusal layers, both
+returning status `refused`.
+
+1. **Retrieval threshold** (`config.REFUSE_BELOW = 0.40`): when no retrieved chunk's
+   cosine similarity to the query reaches it, `answer` refuses without calling the
+   generator, saying the question may not have been clear.
+2. **Prompt-level refusal**: the generator is told to reply exactly "Not found in the
+   manuals." when the passages answer no part of the question; a reply opening with
+   that is reported as `refused`.
+
+| Metric | Result |
+| --- | --- |
+| Device-resolution accuracy | 23/23 (100%) |
+| Retrieval page-hit@5 | 15/16 (94%) |
+| Correct-refusal rate | 4/4 (100%), false refusals: 0 |
+
+The only failure is `cmp-gpu-length` (comparison retrieval, unchanged; see below).
+
+### Why the threshold is 0.40
+
+Best-chunk cosine similarity overlaps between the two groups, so no threshold separates
+answerable from not-in-manual questions:
+
+| Question | Best similarity | Manuals answer it? |
+| --- | --- | --- |
+| Which holds its resale value better, the R16 or the ACT1250? | 0.499 | no |
+| How do I install Ubuntu on the ACT1250? | 0.535 | no |
+| How loud is the Aurora R16 in decibels under full load? | 0.689 | no |
+| What is the retail price of the Alienware Aurora ACT1250? | 0.731 | no |
+| CR2032 (bare part number) | 0.406 | yes |
+| What does the CR2032 do? | 0.438 | yes |
+| What is the CR2032 battery used for? | 0.522 | yes |
+| Which supports Wi-Fi 7, the R16 or the ACT1250? | 0.566 | yes |
+| Every other answerable eval and test question | 0.572 – 0.842 | yes |
+
+Short questions built around a part number or model code score low even when the right
+passage is retrieved, so any threshold that refused resale or Ubuntu would also refuse
+real questions. With the threshold off, the prompt-level refusal alone refused all four
+not-in-manual questions and nothing else. The threshold is therefore a safety floor just
+below the lowest answerable question measured: it skips generation only for queries
+that match nothing at all, and catches none of the eval set today. Removing device
+names from the query before search was also measured: it lifted some short questions
+(0.47 → 0.6) but dropped the Wi-Fi 7 comparison to 0.453, so it was not adopted.
+
+Test aliases now use realistic names (`1250`, `r-16`, and `aurora` for both devices)
+in place of made-up nicknames, which scored low only because the embedder can't place
+them.
+
+## 2026-11-25: after #8 (conversational session)
 
 Same models, index and `RETRIEVE_K` as below, plus #8: questions with first-person
 words ("my", "I", "mine") are rewritten into a standalone query before retrieval.

@@ -28,7 +28,8 @@ class Hit:
     headings: list[str]
     pages: list[int]
     images: list[str]
-    score: float
+    score: float  # fused (reciprocal-rank) relevance: says how hits rank, not how well they match
+    similarity: float  # cosine similarity of the chunk's embedding to the query's
 
 
 def embed(texts: list[str]) -> list[list[float]]:
@@ -124,6 +125,12 @@ def count(data_dir: Path) -> dict[str, int]:
     return dict(Counter(tbl.search().select(["source"]).to_arrow().column("source").to_pylist()))
 
 
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm = (sum(x * x for x in a) * sum(y * y for y in b)) ** 0.5
+    return dot / norm if norm else 0.0
+
+
 def _fts_text(query: str) -> str:
     # The FTS parser treats some punctuation as syntax; keep words only.
     return " ".join(re.findall(r"[\w.]+", query))
@@ -154,6 +161,7 @@ def search(data_dir: Path, query: str, products: list[str], k: int = 8) -> list[
             pages=list(r["pages"]),
             images=list(r["images"]),
             score=float(r["_relevance_score"]),
+            similarity=_cosine(qvec, list(r["vector"])),
         )
         for r in rows
     ]

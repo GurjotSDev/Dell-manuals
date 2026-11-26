@@ -149,5 +149,5 @@ def test_registry_merges_aliases_from_the_alias_file(rechunk_report):
     from alienrag.registry import load_registry
 
     devices = {d.id: d for d in load_registry(TEST_DATA)}
-    assert devices["act1250"].aliases == ["the beast", "my aurora"]
-    assert devices["r16"].aliases == ["old rig", "my aurora"]  # alias file keys are case-insensitive
+    assert devices["act1250"].aliases == ["1250", "aurora"]
+    assert devices["r16"].aliases == ["r-16", "aurora"]  # alias file keys are case-insensitive
