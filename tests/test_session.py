@@ -90,7 +90,7 @@ def test_configuration_stated_alongside_a_question_is_remembered(indexed):
     assert a.status == "answered" and a.chunks, a.query
 
 
-def test_a_new_session_remembers_nothing_from_an_earlier_one(chat, indexed):
+def test_a_new_session_remembers_nothing_from_an_earlier_one(chat):
     chat("How do I remove the memory module from the Aurora ACT1250?")
     a = answer("and how do I put it back in?", Session(), data_dir=TEST_DATA)
     assert a.status == "needs-device"

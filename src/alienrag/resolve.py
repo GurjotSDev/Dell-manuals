@@ -64,8 +64,10 @@ def resolve(
     for one shared name is a guess, so those devices are left out.
 
     `inherited` (model codes) is the device set of an ongoing conversation: a question
-    that names no device, or none the LLM can settle, is about those. A question with no
-    name in it at all goes straight to them, since the LLM would only be guessing.
+    that no alias matches goes straight to them without asking the LLM, which tends to
+    guess at device-less follow-ups ("mine has liquid cooling" -> every device); so a new
+    device named only in a form the aliases miss is not picked up mid-conversation. A
+    shared name the LLM can't settle also falls back to them.
     """
     by_id = {d.id: d for d in registry}
     if forced:
@@ -81,7 +83,7 @@ def resolve(
             wanted -= {d.id for d in group}
     named = {d.id for d in match.devices}
     found = match.devices + [d for d in registry if d.id in wanted and d.id not in named]
-    return found or (_known(inherited, by_id) if inherited else [])
+    return found or _known(inherited or [], by_id)
 
 
 def _known(ids: list[str], by_id: dict[str, Device]) -> list[Device]:

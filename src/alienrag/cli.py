@@ -44,6 +44,8 @@ def ask_main() -> None:
     )
     args = ap.parse_args()
 
+    from ollama import ResponseError
+
     from alienrag.answer import Session, UnknownDevice, answer
 
     session = Session(devices=args.product or [])
@@ -67,6 +69,9 @@ def ask_main() -> None:
             result = answer(question, session)
         except UnknownDevice as e:
             raise SystemExit(f"ask: {e}")
+        except (ResponseError, ConnectionError) as e:  # Ollama hiccup: keep the session
+            print(f"\nask: model call failed ({e}); try again.")
+            continue
         print()
         _print_answer(result)
         if result.query and result.query != question:

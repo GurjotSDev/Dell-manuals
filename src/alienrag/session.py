@@ -18,7 +18,6 @@ from alienrag import config
 @dataclass
 class Turn:
     question: str  # what the user typed
-    query: str  # the standalone query retrieval ran on
     answer: str
 
 

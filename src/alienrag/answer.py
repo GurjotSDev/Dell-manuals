@@ -87,20 +87,26 @@ def _device_list(devices: list[Device]) -> str:
 
 
 def _generate(
-    question: str, devices: list[Device], hits: list[store.Hit], configuration: list[str]
+    question: str,
+    query: str,
+    devices: list[Device],
+    hits: list[store.Hit],
+    configuration: list[str],
 ) -> str:
+    """The answer to `query` (the standalone form of what the user typed, `question`)."""
     setup = (
         "User's configuration:\n" + "\n".join(f"- {c}" for c in configuration) + "\n\n"
         if configuration
         else ""
     )
+    asked = query if query == question else f"{query}\n(The user's words: {question})"
     resp = ollama.chat(
         model=config.GEN_MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
-                "content": f"Devices:\n{_device_list(devices)}\n\n{setup}Manual passages:\n\n{_context(hits)}\n\nQuestion: {question}",
+                "content": f"Devices:\n{_device_list(devices)}\n\n{setup}Manual passages:\n\n{_context(hits)}\n\nQuestion: {asked}",
             },
         ],
         options={"num_ctx": config.GEN_NUM_CTX, "temperature": 0},
@@ -115,8 +121,8 @@ def _which_device(registry: list[Device]) -> str:
 
 def _noted(configuration: list[str], devices: list[Device]) -> str:
     facts = ", ".join(configuration) or "nothing about your configuration yet"
-    machine = f" {' / '.join(d.name for d in devices)}" if devices else ""
-    return f"Noted for your{machine}: {facts}. I'll use this for the rest of the session."
+    machine = " / ".join(d.name for d in devices) if devices else "machine"
+    return f"Noted for your {machine}: {facts}. I'll use this for the rest of the session."
 
 
 def answer(question: str, session: Session, *, data_dir: Path = config.DATA_DIR) -> Answer:
@@ -150,7 +156,7 @@ def answer(question: str, session: Session, *, data_dir: Path = config.DATA_DIR)
         )
     else:
         hits = store.search(data_dir, query, [d.id for d in devices], k=config.RETRIEVE_K)
-        text = _generate(query, devices, hits, session.configuration)
+        text = _generate(question, query, devices, hits, session.configuration)
         session.active = [d.id for d in devices]
         result = Answer(
             devices=devices,
@@ -160,5 +166,5 @@ def answer(question: str, session: Session, *, data_dir: Path = config.DATA_DIR)
             citations=_citations(text, hits),
             query=query,
         )
-    session.remember(Turn(question, query, result.text))
+    session.remember(Turn(question, result.text))
     return result
