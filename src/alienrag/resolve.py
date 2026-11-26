@@ -54,27 +54,43 @@ def _ask_llm(question: str, registry: list[Device]) -> set[str]:
     return {i.lower() for i in ids if isinstance(i, str)}
 
 
-def resolve(question: str, forced: list[str], registry: list[Device]) -> list[Device]:
+def resolve(
+    question: str, forced: list[str], registry: list[Device], inherited: list[str] | None = None
+) -> list[Device]:
     """The devices `question` is about; empty when it can't tell.
 
     `forced` (model codes) overrides resolution. Devices named unambiguously are always
     kept; the LLM may only add to them. An LLM answer that still picks several devices
     for one shared name is a guess, so those devices are left out.
+
+    `inherited` (model codes) is the device set of an ongoing conversation: a question
+    that no alias matches goes straight to them without asking the LLM, which tends to
+    guess at device-less follow-ups ("mine has liquid cooling" -> every device); so a new
+    device named only in a form the aliases miss is not picked up mid-conversation. A
+    shared name the LLM can't settle also falls back to them.
     """
     by_id = {d.id: d for d in registry}
     if forced:
-        ids = list(dict.fromkeys(f.lower() for f in forced))
-        if unknown := [i for i in ids if i not in by_id]:
-            raise UnknownDevice(
-                f"unknown device ({', '.join(unknown)}); known: {', '.join(sorted(by_id))}"
-            )
-        return [by_id[i] for i in ids]
+        return _known(forced, by_id)
     match = match_aliases(question, registry)
     if match.devices and not match.ambiguous:
         return match.devices
+    if inherited and not match.ambiguous:
+        return _known(inherited, by_id)
     wanted = _ask_llm(question, registry)
     for group in match.ambiguous:
         if sum(d.id in wanted for d in group) > 1:
             wanted -= {d.id for d in group}
     named = {d.id for d in match.devices}
-    return match.devices + [d for d in registry if d.id in wanted and d.id not in named]
+    found = match.devices + [d for d in registry if d.id in wanted and d.id not in named]
+    return found or _known(inherited or [], by_id)
+
+
+def _known(ids: list[str], by_id: dict[str, Device]) -> list[Device]:
+    """The registry devices for model codes `ids`, in order; UnknownDevice if any is missing."""
+    ids = list(dict.fromkeys(i.lower() for i in ids))
+    if unknown := [i for i in ids if i not in by_id]:
+        raise UnknownDevice(
+            f"unknown device ({', '.join(unknown)}); known: {', '.join(sorted(by_id))}"
+        )
+    return [by_id[i] for i in ids]
