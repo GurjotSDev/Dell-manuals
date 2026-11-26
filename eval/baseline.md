@@ -1,8 +1,8 @@
 # Eval baseline
 
-> **DRAFT eval set.** The 23 questions in `golden.jsonl` were drafted from the parsed
-> manual chunks and have not yet been reviewed by the user (every item has
-> `"reviewed": false`). Re-run and replace these numbers once the set is verified.
+> The 23 questions in `golden.jsonl` were drafted from the parsed manual chunks and
+> reviewed by the user against the manual PDFs on 2026-11-25 (no changes needed).
+> The numbers below were measured on exactly this set.
 
 Run with `uv run eval` (add `--answers` to print each answer next to the expected one
 for spot-checking; `--data-dir` to point at another index).
