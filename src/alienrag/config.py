@@ -21,4 +21,6 @@ GEN_NUM_CTX = 16384
 
 RETRIEVE_K = 6  # chunks retrieved per question (hybrid search, product-filtered)
 
+SESSION_TURNS = 4  # earlier turns a chat session keeps for rewriting follow-ups
+
 IMAGES_SCALE = 2.0  # render scale for exported pictures

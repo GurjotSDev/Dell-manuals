@@ -1,7 +1,7 @@
 """The answer seam: question + session -> cited Answer."""
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -10,16 +10,11 @@ import ollama
 from alienrag import config, store
 from alienrag.registry import Device, load_registry
 from alienrag.resolve import UnknownDevice, resolve
+from alienrag.session import Session, Turn, read
 
 __all__ = ["Answer", "Citation", "Session", "UnknownDevice", "answer"]
 
 Status = Literal["answered", "needs-device"]  # later: refused, needs-config-clarification
-
-
-@dataclass
-class Session:
-    # Forced device set (model codes, e.g. "act1250"); empty means resolve from the question.
-    devices: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -35,6 +30,9 @@ class Answer:
     chunks: list[store.Hit]
     text: str
     citations: list[Citation]
+    # The standalone query retrieval ran on: the question itself, or a follow-up
+    # rewritten from the session's history.
+    query: str = ""
 
 
 SYSTEM_PROMPT = """You answer questions about Alienware computers using ONLY the manual passages provided. Never use outside knowledge.
@@ -44,6 +42,7 @@ Rules:
 - Cite every claim with the device and a single page number in square brackets, exactly like [ACT1250 p.54]. Cite only devices and pages that appear in passage headers.
 - For a removal or installation procedure, give the prerequisites, then the steps as a numbered list in the manual's order, and include every WARNING and CAUTION attached to it.
 - Refer to each device by its full name as given in the device list, never by its label alone.
+- If the user's configuration is given and the manual differs by configuration, answer for the user's configuration.
 - If the passages do not contain the answer, say it is not found in the manuals."""
 
 
@@ -87,14 +86,21 @@ def _device_list(devices: list[Device]) -> str:
     return "\n".join(f"- {d.name} (label {_label(d.id)})" for d in devices)
 
 
-def _generate(question: str, devices: list[Device], hits: list[store.Hit]) -> str:
+def _generate(
+    question: str, devices: list[Device], hits: list[store.Hit], configuration: list[str]
+) -> str:
+    setup = (
+        "User's configuration:\n" + "\n".join(f"- {c}" for c in configuration) + "\n\n"
+        if configuration
+        else ""
+    )
     resp = ollama.chat(
         model=config.GEN_MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {
                 "role": "user",
-                "content": f"Devices:\n{_device_list(devices)}\n\nManual passages:\n\n{_context(hits)}\n\nQuestion: {question}",
+                "content": f"Devices:\n{_device_list(devices)}\n\n{setup}Manual passages:\n\n{_context(hits)}\n\nQuestion: {question}",
             },
         ],
         options={"num_ctx": config.GEN_NUM_CTX, "temperature": 0},
@@ -107,21 +113,52 @@ def _which_device(registry: list[Device]) -> str:
     return f"Which device is your question about? I have manuals for:\n{names}"
 
 
+def _noted(configuration: list[str], devices: list[Device]) -> str:
+    facts = ", ".join(configuration) or "nothing about your configuration yet"
+    machine = f" {' / '.join(d.name for d in devices)}" if devices else ""
+    return f"Noted for your{machine}: {facts}. I'll use this for the rest of the session."
+
+
 def answer(question: str, session: Session, *, data_dir: Path = config.DATA_DIR) -> Answer:
+    """Answer `question` in `session`, updating the session's devices, configuration and turns."""
     registry = load_registry(data_dir)
     if not registry:
         raise RuntimeError(f"no device registry in {data_dir}; run `index` first")
-    devices = resolve(question, session.devices, registry)
-    if not devices:
-        return Answer(
-            devices=[], status="needs-device", chunks=[], text=_which_device(registry), citations=[]
+    reading = read(question, session)
+    session.configuration = reading.configuration
+    query = reading.query
+    devices = resolve(question, session.devices, registry, inherited=session.active)
+    if not query:  # the message only stated facts about the user's machine
+        if devices:
+            session.active = [d.id for d in devices]
+        result = Answer(
+            devices=devices,
+            status="answered",
+            chunks=[],
+            text=_noted(session.configuration, devices),
+            citations=[],
+            query=query,
         )
-    hits = store.search(data_dir, question, [d.id for d in devices], k=config.RETRIEVE_K)
-    text = _generate(question, devices, hits)
-    return Answer(
-        devices=devices,
-        status="answered",
-        chunks=hits,
-        text=text,
-        citations=_citations(text, hits),
-    )
+    elif not devices:
+        result = Answer(
+            devices=[],
+            status="needs-device",
+            chunks=[],
+            text=_which_device(registry),
+            citations=[],
+            query=query,
+        )
+    else:
+        hits = store.search(data_dir, query, [d.id for d in devices], k=config.RETRIEVE_K)
+        text = _generate(query, devices, hits, session.configuration)
+        session.active = [d.id for d in devices]
+        result = Answer(
+            devices=devices,
+            status="answered",
+            chunks=hits,
+            text=text,
+            citations=_citations(text, hits),
+            query=query,
+        )
+    session.remember(Turn(question, query, result.text))
+    return result
