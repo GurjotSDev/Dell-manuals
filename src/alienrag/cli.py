@@ -1,6 +1,8 @@
-"""Entry points: `index` and `ask`."""
+"""Entry points: `index`, `ask` and `eval`."""
 
 import argparse
+import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from alienrag import config
@@ -76,3 +78,33 @@ def ask_main() -> None:
         _print_answer(result)
         if result.query and result.query != question:
             print(f"\n(searched for: {result.query})")
+
+
+def eval_main() -> None:
+    ap = argparse.ArgumentParser(
+        description="Run the golden eval set through `answer` and print the metrics."
+    )
+    ap.add_argument("--golden", type=Path, default=config.GOLDEN_FILE, help="eval set (JSONL)")
+    ap.add_argument("--data-dir", type=Path, default=config.DATA_DIR, help="index to evaluate")
+    ap.add_argument(
+        "--answers", action="store_true", help="also print every answer next to the expected one"
+    )
+    args = ap.parse_args()
+
+    from alienrag.answer import Answer, Session, answer
+    from alienrag.evaluation import EvalItem, evaluate, format_report, load_golden
+
+    items = load_golden(args.golden)
+
+    def ask(item: EvalItem) -> Answer:
+        print(f"[{items.index(item) + 1}/{len(items)}] {item.id}", file=sys.stderr, flush=True)
+        a = answer(item.question, Session(), data_dir=args.data_dir)  # fresh session each
+        if args.answers:
+            print(f"\n=== {item.id}: {item.question}\nstatus: {a.status}")
+            print(f"expected: {item.answer}\n--- got:\n{a.text.strip()}\n")
+        return a
+
+    report = evaluate(items, ask)
+    print(format_report(report))
+    if unreviewed := sum(not i.reviewed for i in items):
+        print(f"\nDRAFT: {unreviewed}/{len(items)} eval items not yet reviewed by the user.")
