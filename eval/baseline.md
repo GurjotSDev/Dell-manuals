@@ -7,7 +7,50 @@
 Run with `uv run eval` (add `--answers` to print each answer next to the expected one
 for spot-checking; `--data-dir` to point at another index).
 
-## 2026-11-26: after #7 (answer rules) — current baseline
+## 2026-11-26: after #9 (comparison questions) — current baseline
+
+Same models, index and per-question settings as #7 below, plus #9 for questions about
+several devices:
+
+- Each device is searched on its own (`RETRIEVE_K` each, product-filtered) and the
+  per-device rankings are interleaved, so every device's best chunk is in the top 5.
+  Sections are completed per device from a shared budget
+  (`CONTEXT_MAX_CHUNKS_COMPARISON = 20`, at least `RETRIEVE_K` per device).
+- Each device is searched twice, with the query as asked and with every device name
+  taken out, and the two rankings are interleaved. Ranks of each item's expected page in
+  its device's own search:
+
+  | Item | Device | With names | Without names |
+  | --- | --- | --- | --- |
+  | cmp-memory-speed | r16 / act1250 | 1 / 1 | 1 / 1 |
+  | cmp-m2-2280-capacity | act1250 / r16 | 1 / 1 | 4 / 2 |
+  | cmp-wifi-7 | r16 / act1250 | 1 / 1 | 1 / 2 |
+  | cmp-gpu-length | act1250 / r16 | 1 / not in top 6 | 1 / 1 |
+
+  Names pull up each manual's spec chunks (headed "Specifications of Alienware Aurora
+  …"), which is usually right but buried the R16's graphics card length on p.61. Neither
+  query alone hits every item; interleaved, each first hit is in its device's top 2.
+- Context reaches the generator grouped under a header per device, and a comparison
+  rule (added to the prompt only for several devices) asks for a bold heading per
+  device, per-device citations, and saying under its heading when a device's manual
+  doesn't cover the topic.
+- "Compare that with the R16" adds the R16 to the session's devices: a message naming
+  a device extends the active set when it has a comparison word (compare, versus, vs,
+  against, differ…, both), and replaces it otherwise ("what about the R16?").
+
+| Metric | Result |
+| --- | --- |
+| Device-resolution accuracy | 23/23 (100%) |
+| Retrieval page-hit@5 | 16/16 (100%) |
+| Correct-refusal rate | 4/4 (100%), false refusals: 0 |
+
+`cmp-gpu-length`, the only failure since #5, now passes. A first version applied the
+heading rule to every question; single-device refusals then came back as
+"**Alienware Aurora R16** / Not found in the manuals." and were scored as answers
+(refusals 2/4), so the rule is now sent only for comparisons, and refusal detection
+ignores device-heading lines.
+
+## 2026-11-26: after #7 (answer rules)
 
 Same models, index, `RETRIEVE_K` and refusal as #6 below, plus #7: each retrieved chunk
 brings the rest of its section (up to 4 chunks per section, 12 in all) so procedures and

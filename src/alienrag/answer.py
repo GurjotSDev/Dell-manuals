@@ -2,6 +2,7 @@
 
 import re
 from dataclasses import dataclass
+from itertools import zip_longest
 from pathlib import Path
 from typing import Literal
 
@@ -53,6 +54,10 @@ Rules:
   - Only for a removal or installation procedure: if it has more than two configuration variants, or presenting them all would be very long, do not answer. Reply with one line only: CLARIFY: followed by a short question asking which configuration the user has, naming the options. Never do this for a specification or other factual question: list the value for every configuration instead.
 - If the passages answer no part of the question, reply with exactly "Not found in the manuals." and nothing else. If they answer only part of it (for example one device of a comparison), answer that part and say which part the manuals don't cover."""
 
+# Added to SYSTEM_PROMPT when the question is about several devices.
+COMPARISON_RULE = """
+- The question is about several devices, and the passages are grouped under a === header per device. Answer under a heading for each device, in the device list's order: a line with only the device's full name in bold, like **Alienware Aurora R16**. Under each heading use only that device's passages, and cite every claim and step with that device's label and page, like [R16 p.61]. If a device's passages don't cover the topic, say under its heading that its manual doesn't cover it. After the per-device sections you may add one short line comparing them, with no citations."""
+
 
 def _label(product: str) -> str:
     return product.upper()
@@ -77,10 +82,21 @@ def _in_manual_order(hits: list[store.Hit]) -> list[store.Hit]:
     return sorted(hits, key=lambda h: (rank[_key(h)], h.id))
 
 
-def _context(hits: list[store.Hit]) -> str:
+def _passages(hits: list[store.Hit]) -> str:
     return "\n\n".join(
         f"[{_label(h.product)} {_page_span(h.pages)}] {' > '.join(h.headings)}\n{h.text}"
         for h in _in_manual_order(hits)
+    )
+
+
+def _context(hits: list[store.Hit], devices: list[Device]) -> str:
+    """The passages, grouped under a header per device when there are several."""
+    if len(devices) == 1:
+        return _passages(hits)
+    return "\n\n".join(
+        f"=== {d.name} (label {_label(d.id)}) ===\n\n"
+        + (_passages([h for h in hits if h.product == d.id]) or "(no passages)")
+        for d in devices
     )
 
 
@@ -202,10 +218,13 @@ def _generate(
     resp = ollama.chat(
         model=config.GEN_MODEL,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT + (COMPARISON_RULE if len(devices) > 1 else ""),
+            },
             {
                 "role": "user",
-                "content": f"Devices:\n{_device_list(devices)}\n\n{setup}Manual passages:\n\n{_context(hits)}\n\nQuestion: {asked}",
+                "content": f"Devices:\n{_device_list(devices)}\n\n{setup}Manual passages:\n\n{_context(hits, devices)}\n\nQuestion: {asked}",
             },
         ],
         options={"num_ctx": config.GEN_NUM_CTX, "temperature": 0},
@@ -222,10 +241,14 @@ NOT_FOUND_OR_UNCLEAR = (
 )
 
 
-def _refuses(text: str) -> bool:
-    """The generator declined: its whole reply is the refusal the prompt asks for. A reply
+def _refuses(text: str, devices: list[Device]) -> bool:
+    """The generator declined: its whole reply is the refusal the prompt asks for, under
+    any device headings (a comparison none of whose manuals covers the topic). A reply
     that says more (a partial answer naming what isn't covered) is an answer."""
-    return text.strip(" \t\n*_\"'.").lower() == NOT_FOUND.lower().rstrip(".")
+    headings = {d.name.lower() for d in devices}
+    lines = [s for line in text.splitlines() if (s := line.strip(" \t#*_\"'.:").lower())]
+    lines = [s for s in lines if s not in headings]
+    return bool(lines) and all(s == NOT_FOUND.lower().rstrip(".") for s in lines)
 
 
 def _which_device(registry: list[Device]) -> str:
@@ -237,6 +260,70 @@ def _noted(configuration: list[str], devices: list[Device]) -> str:
     facts = ", ".join(configuration) or "nothing about your configuration yet"
     machine = " / ".join(d.name for d in devices) if devices else "machine"
     return f"Noted for your {machine}: {facts}. I'll use this for the rest of the session."
+
+
+def _without_device_names(query: str, registry: list[Device]) -> str:
+    """`query` with every device's model code, name and aliases taken out (whole words,
+    longest first, case-insensitive)."""
+    terms = sorted({t for d in registry for t in [d.id, d.name, *d.aliases] if t.strip()}, key=len)
+    for t in reversed(terms):
+        query = re.sub(rf"(?<![A-Za-z0-9]){re.escape(t)}(?![A-Za-z0-9])", "", query, flags=re.I)
+    return re.sub(r"\s+", " ", query).strip()
+
+
+def _retrieve(
+    data_dir: Path, query: str, devices: list[Device], registry: list[Device]
+) -> tuple[list[store.Hit], list[store.Hit]]:
+    """The ranked hits for `query`, and those hits followed by the chunks completing
+    their sections.
+
+    A comparison searches each device on its own (top-k, product-filtered) so one manual
+    can't crowd out another, and interleaves the rankings: every device's best chunk
+    comes before any device's second best. The context budget is shared between the
+    devices.
+
+    Each device is searched twice, with and without the device names, and the two
+    rankings are interleaved. The names pull up each manual's spec chunks, which are
+    headed with the device's name: usually right, but they can crowd out an answering
+    passage elsewhere (the R16's graphics card length is on p.61, outside the specs).
+    See eval/baseline.md.
+    """
+    if len(devices) == 1:
+        ranked = store.search(data_dir, query, [devices[0].id], k=config.RETRIEVE_K)
+        hits = store.complete_sections(
+            data_dir,
+            ranked,
+            max_section=config.SECTION_MAX_CHUNKS,
+            max_total=config.CONTEXT_MAX_CHUNKS,
+        )
+        return ranked, hits
+    budget = max(config.RETRIEVE_K, config.CONTEXT_MAX_CHUNKS_COMPARISON // len(devices))
+    nameless = _without_device_names(query, registry)
+    rankings: list[list[store.Hit]] = []
+    added: list[store.Hit] = []
+    for d in devices:
+        queries = [q for q in (query, nameless) if q]
+        both = [store.search(data_dir, q, [d.id], k=config.RETRIEVE_K) for q in queries]
+        ranked = _interleave(both)[: config.RETRIEVE_K]
+        hits = store.complete_sections(
+            data_dir, ranked, max_section=config.SECTION_MAX_CHUNKS, max_total=budget
+        )
+        rankings.append(ranked)
+        added += hits[len(ranked) :]
+    ranked = _interleave(rankings)
+    return ranked, ranked + added
+
+
+def _interleave(rankings: list[list[store.Hit]]) -> list[store.Hit]:
+    """Every ranking's first hit, then every ranking's second, ...; each chunk once."""
+    out: list[store.Hit] = []
+    seen: set[str] = set()
+    for rank in zip_longest(*rankings):
+        for h in rank:
+            if h is not None and h.id not in seen:
+                seen.add(h.id)
+                out.append(h)
+    return out
 
 
 def answer(question: str, session: Session, *, data_dir: Path = config.DATA_DIR) -> Answer:
@@ -269,13 +356,7 @@ def answer(question: str, session: Session, *, data_dir: Path = config.DATA_DIR)
             query=query,
         )
     else:
-        ranked = store.search(data_dir, query, [d.id for d in devices], k=config.RETRIEVE_K)
-        hits = store.complete_sections(
-            data_dir,
-            ranked,
-            max_section=config.SECTION_MAX_CHUNKS,
-            max_total=config.CONTEXT_MAX_CHUNKS,
-        )
+        ranked, hits = _retrieve(data_dir, query, devices, registry)
         session.active = [d.id for d in devices]
         status: Status = "answered"
         # The threshold judges what search ranked; chunks added to complete a section
@@ -284,7 +365,7 @@ def answer(question: str, session: Session, *, data_dir: Path = config.DATA_DIR)
             text, status = NOT_FOUND_OR_UNCLEAR, "refused"  # refused without generating
         else:
             text = _generate(question, query, devices, hits, session.configuration)
-            if _refuses(text):
+            if _refuses(text, devices):
                 text, status = NOT_FOUND, "refused"  # drop the model's formatting around it
             elif m := _CLARIFY.search(text):
                 text, status = _CITE.sub("", m.group(1)).strip(), "needs-config-clarification"
