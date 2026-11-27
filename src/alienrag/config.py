@@ -33,6 +33,10 @@ REFUSE_BELOW = 0.40
 # CONTEXT_MAX_CHUNKS chunks shown to the generator in all.
 SECTION_MAX_CHUNKS = 4
 CONTEXT_MAX_CHUNKS = 12
+# A comparison retrieves RETRIEVE_K chunks per device and shares this budget between
+# the devices for completing sections (at least RETRIEVE_K each). Chunks average ~400
+# tokens, so 20 stays well inside GEN_NUM_CTX.
+CONTEXT_MAX_CHUNKS_COMPARISON = 20
 
 SESSION_TURNS = 4  # earlier turns a chat session keeps for rewriting follow-ups
 

@@ -5,6 +5,7 @@ matching finds nothing or meets a name shared by several devices.
 """
 
 import json
+import re
 
 import ollama
 
@@ -67,14 +68,17 @@ def resolve(
     that no alias matches goes straight to them without asking the LLM, which tends to
     guess at device-less follow-ups ("mine has liquid cooling" -> every device); so a new
     device named only in a form the aliases miss is not picked up mid-conversation. A
-    shared name the LLM can't settle also falls back to them.
+    shared name the LLM can't settle also falls back to them. A question that names
+    devices replaces them ("what about the R16?"), unless it names one device and asks
+    for a comparison ("compare that with the R16"): then that device is added to them.
+    A comparison naming several devices names its whole set.
     """
     by_id = {d.id: d for d in registry}
     if forced:
         return _known(forced, by_id)
     match = match_aliases(question, registry)
     if match.devices and not match.ambiguous:
-        return match.devices
+        return _extending(inherited, match.devices, question, by_id)
     if inherited and not match.ambiguous:
         return _known(inherited, by_id)
     wanted = _ask_llm(question, registry)
@@ -83,7 +87,27 @@ def resolve(
             wanted -= {d.id for d in group}
     named = {d.id for d in match.devices}
     found = match.devices + [d for d in registry if d.id in wanted and d.id not in named]
-    return found or _known(inherited or [], by_id)
+    if found:
+        return _extending(inherited, found, question, by_id)
+    return _known(inherited or [], by_id)
+
+
+# Words that ask to compare with what's already being discussed. Not "against" or
+# "both", which ordinary questions use ("protect it against static").
+_COMPARING = re.compile(
+    r"\b(compare[ds]?|comparing|comparison|versus|vs|differ\w*)\b", re.IGNORECASE
+)
+
+
+def _extending(
+    inherited: list[str] | None, named: list[Device], question: str, by_id: dict[str, Device]
+) -> list[Device]:
+    """`named`, after the `inherited` devices when `question` names one device and asks
+    for a comparison."""
+    if not inherited or len(named) != 1 or not _COMPARING.search(question):
+        return named
+    kept = _known(inherited, by_id)
+    return kept + [d for d in named if d not in kept]
 
 
 def _known(ids: list[str], by_id: dict[str, Device]) -> list[Device]:
