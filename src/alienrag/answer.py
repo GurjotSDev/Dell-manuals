@@ -14,7 +14,9 @@ from alienrag.session import Session, Turn, read
 
 __all__ = ["Answer", "Citation", "Session", "UnknownDevice", "answer"]
 
-Status = Literal["answered", "needs-device", "refused"]  # later: needs-config-clarification
+# needs-config-clarification: the answer differs by configuration and the variants are
+# too long to present together, so `text` asks which configuration the user has.
+Status = Literal["answered", "needs-device", "refused", "needs-config-clarification"]
 
 
 @dataclass
@@ -27,6 +29,8 @@ class Citation:
 class Answer:
     devices: list[Device]
     status: Status
+    # What the generator saw: the retrieved chunks in rank order, then the chunks that
+    # complete their sections.
     chunks: list[store.Hit]
     text: str
     citations: list[Citation]
@@ -40,9 +44,13 @@ SYSTEM_PROMPT = """You answer questions about Alienware computers using ONLY the
 Each passage starts with a header like [ACT1250 p.54-55] giving the device and its pages.
 Rules:
 - Cite every claim with the device and a single page number in square brackets, exactly like [ACT1250 p.54]. Cite only devices and pages that appear in passage headers.
-- For a removal or installation procedure, give the prerequisites, then the steps as a numbered list in the manual's order, and include every WARNING and CAUTION attached to it.
+- For a removal or installation procedure, give the prerequisites, then the steps as a numbered list in the manual's order. Quote every WARNING and CAUTION of the procedure word for word, including any that come before its prerequisites, even when the user didn't ask about safety.
 - Refer to each device by its full name as given in the device list, never by its label alone.
-- If the user's configuration is given and the manual differs by configuration, answer for the user's configuration.
+- For a specification question, list every option or configuration the passages document (for example every graphics card in a table, with its values), never a single guessed value.
+- When the manual gives different procedures or values for different configurations (for example air vs. liquid cooling, 120 mm vs. 240 mm radiator, 500 W vs. 1000 W power supply):
+  - If the user's configuration is given, answer for the user's configuration only.
+  - Otherwise present each variant under its own label naming the configuration, each complete with its own steps and warnings.
+  - Only for a removal or installation procedure: if it has more than two configuration variants, or presenting them all would be very long, do not answer. Reply with one line only: CLARIFY: followed by a short question asking which configuration the user has, naming the options. Never do this for a specification or other factual question: list the value for every configuration instead.
 - If the passages answer no part of the question, reply with exactly "Not found in the manuals." and nothing else. If they answer only part of it (for example one device of a comparison), answer that part and say which part the manuals don't cover."""
 
 
@@ -54,10 +62,25 @@ def _page_span(pages: list[int]) -> str:
     return f"p.{pages[0]}" if len(pages) == 1 else f"p.{pages[0]}-{pages[-1]}"
 
 
+_SectionKey = tuple[str, tuple[str, ...]]  # (manual, heading path)
+
+
+def _key(h: store.Hit) -> _SectionKey:
+    return (h.source, tuple(h.headings))
+
+
+def _in_manual_order(hits: list[store.Hit]) -> list[store.Hit]:
+    """Sections in the order their first chunk ranks; each section's chunks in manual order."""
+    rank: dict[_SectionKey, int] = {}
+    for h in hits:
+        rank.setdefault(_key(h), len(rank))
+    return sorted(hits, key=lambda h: (rank[_key(h)], h.id))
+
+
 def _context(hits: list[store.Hit]) -> str:
     return "\n\n".join(
         f"[{_label(h.product)} {_page_span(h.pages)}] {' > '.join(h.headings)}\n{h.text}"
-        for h in hits
+        for h in _in_manual_order(hits)
     )
 
 
@@ -82,6 +105,81 @@ def _citations(text: str, hits: list[store.Hit]) -> list[Citation]:
     return out
 
 
+# The generator's signal that variants are too long to present: a reply that is only
+# "CLARIFY: <question>". A marker after an answer is ignored, keeping the answer.
+_CLARIFY = re.compile(r"\A\W*CLARIFY\W*\s*(.+)", re.DOTALL)
+
+# A WARNING/CAUTION line, after any list marker or bold markup: "- CAUTION: ...".
+_SAFETY = re.compile(r"^[\s\-*•\d.]*\**(WARNING|CAUTION):\**\s*(.+)$", re.MULTILINE)
+_STEPS = re.compile(r"^\s*Steps\s*$", re.MULTILINE)
+
+
+def _words(s: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", s.lower())
+
+
+def _step_lines(text: str) -> list[str]:
+    """The numbered lines after a "Steps" label, as their first few words."""
+    m = _STEPS.search(text)
+    if not m:
+        return []
+    lines = re.findall(r"^\s*\d+\.\s+(.+)$", text[m.end() :].split("Next steps")[0], re.MULTILINE)
+    return [k for line in lines if (k := " ".join(_words(line)[:5]))]
+
+
+def _procedures_given(
+    text: str, hits: list[store.Hit], citations: list[Citation]
+) -> list[_SectionKey]:
+    """The procedure sections `text` gives, in manual order.
+
+    A procedure is given when at least half of its steps appear in the answer.
+    Neighbouring procedures share pages (a removal ends where the installation begins),
+    so pages are only the fallback for an answer that gives numbered steps but
+    paraphrases them all: then a procedure counts through a cited page no other
+    procedure is on. An answer with no numbered steps gives no procedure.
+    """
+    sections: dict[_SectionKey, list[store.Hit]] = {}
+    for h in _in_manual_order(hits):
+        sections.setdefault(_key(h), []).append(h)
+    # Joined, so steps that run on into the section's next chunk are counted too.
+    steps = {k: _step_lines("\n".join(h.text for h in hs)) for k, hs in sections.items()}
+    procedures = [k for k, hs in sections.items() if any(_STEPS.search(h.text) for h in hs)]
+    said = " ".join(_words(text))
+    given = [
+        k for k in procedures if steps[k] and 2 * sum(s in said for s in steps[k]) >= len(steps[k])
+    ]
+    if not given and len(re.findall(r"^\s*\d+\.\s", text, re.MULTILINE)) >= 2:
+        pages = {k: {(k[0], p) for h in sections[k] for p in h.pages} for k in procedures}
+        cited = {(c.source, c.page) for c in citations}
+        for k in procedures:
+            own = pages[k] - set().union(*(v for o, v in pages.items() if o != k))
+            if cited & own:
+                given.append(k)
+    return sorted(given, key=lambda k: min(h.id for h in sections[k]))
+
+
+def _with_safety_notes(text: str, hits: list[store.Hit], citations: list[Citation]) -> str:
+    """`text` plus every WARNING/CAUTION of the procedures it gives that it leaves out."""
+    said = " ".join(_words(text))
+    missing: list[str] = []
+    noted: set[str] = set()  # by wording: variants of a procedure repeat the same notes
+    for k in _procedures_given(text, hits, citations):
+        for h in sorted((h for h in hits if _key(h) == k), key=lambda h: h.id):
+            for m in _SAFETY.finditer(h.text):
+                body = m.group(2).strip()
+                gist = " ".join(_words(body)[:8])
+                if gist in said or gist in noted:
+                    continue
+                noted.add(gist)
+                missing.append(
+                    # The chunk's whole span: which of its pages holds the line is unknown.
+                    f"- {m.group(1)}: {body} [{_label(h.product)} {_page_span(h.pages)}]"
+                )
+    if not missing:
+        return text
+    return text.rstrip() + "\n\nSafety notes from the manual:\n" + "\n".join(missing)
+
+
 def _device_list(devices: list[Device]) -> str:
     return "\n".join(f"- {d.name} (label {_label(d.id)})" for d in devices)
 
@@ -95,7 +193,8 @@ def _generate(
 ) -> str:
     """The answer to `query` (the standalone form of what the user typed, `question`)."""
     setup = (
-        "User's configuration:\n" + "\n".join(f"- {c}" for c in configuration) + "\n\n"
+        "User's configuration (answer for this configuration only; leave out the variants "
+        "for other configurations):\n" + "\n".join(f"- {c}" for c in configuration) + "\n\n"
         if configuration
         else ""
     )
@@ -170,21 +269,33 @@ def answer(question: str, session: Session, *, data_dir: Path = config.DATA_DIR)
             query=query,
         )
     else:
-        hits = store.search(data_dir, query, [d.id for d in devices], k=config.RETRIEVE_K)
+        ranked = store.search(data_dir, query, [d.id for d in devices], k=config.RETRIEVE_K)
+        hits = store.complete_sections(
+            data_dir,
+            ranked,
+            max_section=config.SECTION_MAX_CHUNKS,
+            max_total=config.CONTEXT_MAX_CHUNKS,
+        )
         session.active = [d.id for d in devices]
-        if max((h.similarity for h in hits), default=0.0) < config.REFUSE_BELOW:
-            text, refused = NOT_FOUND_OR_UNCLEAR, True  # refused without generating
+        status: Status = "answered"
+        # The threshold judges what search ranked; chunks added to complete a section
+        # carry no similarity of their own.
+        if max((h.similarity for h in ranked), default=0.0) < config.REFUSE_BELOW:
+            text, status = NOT_FOUND_OR_UNCLEAR, "refused"  # refused without generating
         else:
             text = _generate(question, query, devices, hits, session.configuration)
-            refused = _refuses(text)
-            if refused:
-                text = NOT_FOUND  # drop the model's formatting around it
+            if _refuses(text):
+                text, status = NOT_FOUND, "refused"  # drop the model's formatting around it
+            elif m := _CLARIFY.search(text):
+                text, status = _CITE.sub("", m.group(1)).strip(), "needs-config-clarification"
+            else:
+                text = _with_safety_notes(text, hits, _citations(text, hits))
         result = Answer(
             devices=devices,
-            status="refused" if refused else "answered",
+            status=status,
             chunks=hits,
             text=text,
-            citations=[] if refused else _citations(text, hits),
+            citations=_citations(text, hits) if status == "answered" else [],
             query=query,
         )
     session.remember(Turn(question, result.text))

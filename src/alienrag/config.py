@@ -28,6 +28,11 @@ RETRIEVE_K = 6  # chunks retrieved per question (hybrid search, product-filtered
 # answerable questions overlap above it, so the prompt-level refusal does the rest.
 # See eval/baseline.md.
 REFUSE_BELOW = 0.40
+# A retrieved chunk brings the rest of its section (a procedure or spec table split
+# over chunks) when the section has at most SECTION_MAX_CHUNKS chunks, up to
+# CONTEXT_MAX_CHUNKS chunks shown to the generator in all.
+SECTION_MAX_CHUNKS = 4
+CONTEXT_MAX_CHUNKS = 12
 
 SESSION_TURNS = 4  # earlier turns a chat session keeps for rewriting follow-ups
 

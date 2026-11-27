@@ -7,7 +7,32 @@
 Run with `uv run eval` (add `--answers` to print each answer next to the expected one
 for spot-checking; `--data-dir` to point at another index).
 
-## 2026-11-25: after #6 (refusal) — current baseline
+## 2026-11-26: after #7 (answer rules) — current baseline
+
+Same models, index, `RETRIEVE_K` and refusal as #6 below, plus #7: each retrieved chunk
+brings the rest of its section (up to 4 chunks per section, 12 in all) so procedures and
+spec tables reach the generator whole; prompt rules for spec options and configuration
+variants; a `needs-config-clarification` status; any WARNING/CAUTION of a procedure the
+answer gives that the generator left out is appended as "Safety notes from the manual".
+The refusal threshold still judges only the ranked hits, not the chunks added to
+complete a section.
+
+| Metric | Result |
+| --- | --- |
+| Device-resolution accuracy | 23/23 (100%) |
+| Retrieval page-hit@5 | 15/16 (94%) |
+| Correct-refusal rate | 4/4 (100%), false refusals: 0 |
+
+Metrics are unchanged from #6; the only failure is still `cmp-gpu-length`. Page-hit@5
+is unaffected by section completion, because added chunks come after the ranked ones.
+Every configuration-dependent item came back `answered` with each variant labelled (no
+clarification needed). In `cfg-act1250-cpu-cooler-removal` the generator paraphrased the
+technicians-only CAUTION and the safety notes restored the manual's wording. This run
+also showed safety notes wrongly added to `sd-act1250-bios-key` (BIOS-update cautions,
+through a cited p.125-126). The page fallback now applies only to answers with numbered
+steps, and a test covers it; the metrics don't depend on it.
+
+## 2026-11-25: after #6 (refusal)
 
 Same models, index and `RETRIEVE_K` as below, plus #6: two refusal layers, both
 returning status `refused`.

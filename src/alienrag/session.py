@@ -47,7 +47,7 @@ class Reading:
 
 READ_PROMPT = """You read the user's latest message in a chat about Alienware computer manuals.
 
-1. "query": rewrite the latest message into a standalone search query. Resolve every reference to earlier turns ("it", "that", "and the RAM?", "put it back") so it makes sense on its own. When the user's configuration decides which part or procedure applies (for example liquid cooling vs. air cooling), make the query specific to it. Keep it short, in the user's words where possible, and leave out device names. Do not answer it. If the message only states facts and asks nothing, use "".
+1. "query": rewrite the latest message into a standalone search query. Resolve every reference to earlier turns ("it", "that", "and the RAM?", "put it back") so it makes sense on its own. When the user's configuration decides which part or procedure applies (for example liquid cooling vs. air cooling), make the query specific to it. Keep it short, in the user's words where possible, and leave out device names. Do not answer it. If the message only states facts and asks nothing, use "". Exception: when the assistant's previous reply was a question asking which configuration the user has, a message answering it means the user's earlier question, so rewrite that earlier question for the stated configuration.
 
 2. "configuration": the hardware configuration the user says their own machine has (GPU, CPU, cooling, power supply, memory, storage and similar), as short facts like "RTX 5080 GPU" or "liquid cooling". Start from the configuration already known, add what the latest message states, and replace a fact only when the user corrects it. Device model names are not configuration. Never guess.
 
@@ -106,7 +106,10 @@ def read(question: str, session: Session) -> Reading:
     facts = raw.get("configuration")
     if not isinstance(facts, list):
         facts = session.configuration
-    return Reading(
-        query.strip() if isinstance(query, str) else question,
-        list(dict.fromkeys(f.strip() for f in facts if isinstance(f, str) and f.strip())),
-    )
+    facts = list(dict.fromkeys(f.strip() for f in facts if isinstance(f, str) and f.strip()))
+    query = query.strip() if isinstance(query, str) else question
+    # An empty query means the message only stated facts; one that states nothing new
+    # is still a question, whatever the reader made of it.
+    if not query and facts == session.configuration:
+        query = question
+    return Reading(query, facts)
