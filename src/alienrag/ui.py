@@ -7,13 +7,17 @@ cited chunks.
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pypdfium2
 
 from alienrag import config
-from alienrag.answer import Answer, Citation, Session, answer
+from alienrag.answer import Answer, Citation, Session, answer, procedure_chunks
 from alienrag.caption import is_procedure_image
 from alienrag.registry import load_registry
+
+if TYPE_CHECKING:
+    import gradio as gr
 
 PAGE_SCALE = 2  # render scale for cited pages: 144 dpi
 
@@ -26,7 +30,7 @@ class Page:
 
 @dataclass
 class Reply:
-    text: str  # markdown: the answer, then its sources
+    text: str  # markdown: the device, the answer, then its sources
     pages: list[Page] = field(default_factory=list)
     images: list[Path] = field(default_factory=list)  # procedure images, in manual order
     # Answers the user can pick instead of typing: the devices, when asked which one.
@@ -56,18 +60,25 @@ def _page_png(citation: Citation, data_dir: Path, manuals_dir: Path) -> Path | N
     return out
 
 
-def _sources(citations: list[Citation]) -> str:
-    return "\n".join(f"- {c.source}.pdf, page {c.page}" for c in citations)
+def _page_label(c: Citation) -> str:
+    return f"{c.source}.pdf, page {c.page}"
 
 
 def _linked_images(result: Answer, data_dir: Path) -> list[Path]:
-    """The procedure images of the chunks the answer cites: chunks it was given that are
-    on a cited page. Note and warning icons are left out."""
+    """The procedure images of the chunks the answer cites. Note and warning icons are
+    left out.
+
+    For an answer giving a procedure, the cited chunks are that procedure's: a removal
+    and the installation after it share a page, and each has its own figure. Otherwise
+    they are the chunks on a cited page.
+    """
     cited = {(c.source, c.page) for c in result.citations}
+    chunks = procedure_chunks(result) or sorted(
+        (h for h in result.chunks if any((h.source, p) in cited for p in h.pages)),
+        key=lambda h: h.id,
+    )
     out: list[Path] = []
-    for h in sorted(result.chunks, key=lambda h: h.id):
-        if not any((h.source, p) in cited for p in h.pages):
-            continue
+    for h in chunks:
         for rel in h.images:
             path = data_dir / rel
             if path not in out and path.exists() and is_procedure_image(path):
@@ -76,12 +87,21 @@ def _linked_images(result: Answer, data_dir: Path) -> list[Path]:
 
 
 def reply(
-    result: Answer, *, data_dir: Path = config.DATA_DIR, manuals_dir: Path = config.MANUALS_DIR
+    result: Answer,
+    question: str,
+    *,
+    data_dir: Path = config.DATA_DIR,
+    manuals_dir: Path = config.MANUALS_DIR,
 ) -> Reply:
-    """What the chat shows for `result`."""
+    """What the chat shows for `result`, the answer to `question`. Like the CLI, it
+    names the devices and, when a follow-up was rewritten, what was searched for."""
     text = result.text.strip()
+    if result.devices:
+        text = f"**{' / '.join(d.name for d in result.devices)}**\n\n{text}"
     if result.citations:
-        text += "\n\n**Sources**\n" + _sources(result.citations)
+        text += "\n\n**Sources**\n" + "\n".join(f"- {_page_label(c)}" for c in result.citations)
+    if result.query and result.query != question:
+        text += f"\n\n_(searched for: {result.query})_"
     pages = [
         Page(c, path)
         for c in result.citations
@@ -104,7 +124,7 @@ def messages(r: Reply) -> list[dict]:
         text["options"] = [{"value": o, "label": o} for o in r.options]
     return [
         text,
-        *(_file(p.path, f"{p.citation.source}.pdf, page {p.citation.page}") for p in r.pages),
+        *(_file(p.path, _page_label(p.citation)) for p in r.pages),
         *(_file(path, path.name) for path in r.images),
     ]
 
@@ -117,20 +137,24 @@ def respond(
     data_dir: Path = config.DATA_DIR,
     manuals_dir: Path = config.MANUALS_DIR,
 ) -> tuple[list[dict], Session]:
-    """One chat turn: `history` with `message` and the reply to it, and the session."""
-    from ollama import ResponseError
+    """One chat turn: `history` with `message` and the reply to it, and the session.
 
+    A turn that fails (a model call, a missing index) says so in the chat, keeping the
+    question in the history and the session as it is.
+    """
     history = [*history, {"role": "user", "content": message}]
     try:
         result = answer(message, session, data_dir=data_dir)
-    except (ResponseError, ConnectionError) as e:  # Ollama hiccup: keep the session
-        failed = {"role": "assistant", "content": f"Model call failed ({e}); try again."}
+    except Exception as e:
+        failed = {"role": "assistant", "content": f"Couldn't answer that ({e}); try again."}
         return [*history, failed], session
-    shown = messages(reply(result, data_dir=data_dir, manuals_dir=manuals_dir))
+    shown = messages(reply(result, message, data_dir=data_dir, manuals_dir=manuals_dir))
     return [*history, *shown], session
 
 
-def app(*, data_dir: Path = config.DATA_DIR, manuals_dir: Path = config.MANUALS_DIR):
+def app(
+    *, data_dir: Path = config.DATA_DIR, manuals_dir: Path = config.MANUALS_DIR
+) -> "gr.Blocks":
     """The Gradio chat page. Each browser tab gets its own session."""
     import gradio as gr
 

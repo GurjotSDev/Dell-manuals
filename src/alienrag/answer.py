@@ -13,7 +13,7 @@ from alienrag.registry import Device, load_registry
 from alienrag.resolve import UnknownDevice, resolve
 from alienrag.session import Session, Turn, read
 
-__all__ = ["Answer", "Citation", "Session", "UnknownDevice", "answer"]
+__all__ = ["Answer", "Citation", "Session", "UnknownDevice", "answer", "procedure_chunks"]
 
 # needs-config-clarification: the answer differs by configuration and the variants are
 # too long to present together, so `text` asks which configuration the user has.
@@ -172,6 +172,13 @@ def _procedures_given(
             if cited & own:
                 given.append(k)
     return sorted(given, key=lambda k: min(h.id for h in sections[k]))
+
+
+def procedure_chunks(result: Answer) -> list[store.Hit]:
+    """The chunks of the procedures `result` gives (see `_procedures_given`), in manual
+    order; none for an answer that gives no procedure."""
+    given = set(_procedures_given(result.text, result.chunks, result.citations))
+    return sorted((h for h in result.chunks if _key(h) in given), key=lambda h: h.id)
 
 
 def _with_safety_notes(text: str, hits: list[store.Hit], citations: list[Citation]) -> str:

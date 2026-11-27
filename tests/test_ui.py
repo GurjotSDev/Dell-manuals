@@ -13,7 +13,7 @@ from PIL import Image
 
 from alienrag.answer import Answer, Citation, Session
 from alienrag.indexing import index
-from alienrag.registry import load_registry
+from alienrag.registry import load_registry, model_code
 from alienrag.store import Hit
 from alienrag.ui import reply, respond
 
@@ -42,7 +42,7 @@ def _chunk(source: str, heading: str) -> Hit:
                 return Hit(
                     id=c["id"],
                     source=c["source"],
-                    product="act1250",
+                    product=model_code(c["source"]),
                     text=c["text"],
                     headings=c["headings"],
                     pages=c["pages"],
@@ -53,19 +53,36 @@ def _chunk(source: str, heading: str) -> Hit:
     raise LookupError(heading)
 
 
-def _answered(hits: list[Hit], citations: list[Citation]) -> Answer:
-    devices = [d for d in load_registry(TEST_DATA) if d.id == "act1250"]
+def _act1250():
+    return [d for d in load_registry(TEST_DATA) if d.id == "act1250"]
+
+
+def _answered(
+    hits: list[Hit],
+    citations: list[Citation],
+    text: str = "1. Remove the memory module [ACT1250 p.54].",
+    query: str = "",
+) -> Answer:
     return Answer(
-        devices=devices,
+        devices=_act1250(),
         status="answered",
         chunks=hits,
-        text="1. Remove the memory module [ACT1250 p.54].",
+        text=text,
         citations=citations,
+        query=query,
     )
 
 
-def _reply(a: Answer):
-    return reply(a, data_dir=TEST_DATA, manuals_dir=MANUALS)
+def _reply(a: Answer, question: str = ""):
+    return reply(a, question, data_dir=TEST_DATA, manuals_dir=MANUALS)
+
+
+def _sizes(paths: list[Path]) -> list[tuple[int, int]]:
+    out = []
+    for path in paths:
+        with Image.open(path) as im:
+            out.append(im.size)
+    return out
 
 
 def test_answer_lists_its_sources_and_shows_each_cited_page_rendered(indexed):
@@ -83,11 +100,32 @@ def test_answer_shows_the_procedure_images_of_the_cited_chunks_only(indexed):
     memory = _chunk(ACT1250, "Removing the memory module")  # p.54-55: 1 figure, 2 icons
     wireless = _chunk(ACT1250, "Removing the wireless card")  # p.66-67, not cited
     r = _reply(_answered([memory, wireless], [Citation(ACT1250, 54)]))
-    sizes = []
-    for path in r.images:
-        with Image.open(path) as im:
-            sizes.append(im.size)
-    assert sizes == [(793, 457)]  # the memory-module figure; note and warning icons dropped
+    # The memory-module figure; note and warning icons dropped.
+    assert _sizes(r.images) == [(793, 457)]
+
+
+def test_a_procedure_shows_its_own_figure_not_its_neighbours_on_a_shared_page(indexed):
+    removing = _chunk(ACT1250, "Removing the memory module")  # p.54-55, figure 793x457
+    installing = _chunk(ACT1250, "Installing the memory module")  # p.55-56, figure 795x455
+    text = (
+        "Steps\n"
+        "1. Lay the computer on the right side [ACT1250 p.54].\n"
+        "2. Push the securing clips away from the memory module [ACT1250 p.55].\n"
+        "3. Lift the memory module off the memory-module slot [ACT1250 p.55]."
+    )
+    cited = [Citation(ACT1250, 54), Citation(ACT1250, 55)]
+    r = _reply(_answered([removing, installing], cited, text))
+    assert _sizes(r.images) == [(793, 457)]
+
+
+def test_answer_is_headed_by_its_device_and_says_what_a_follow_up_searched_for(indexed):
+    memory = _chunk(ACT1250, "Removing the memory module")
+    a = _answered([memory], [Citation(ACT1250, 54)], query="install the memory module")
+    r = _reply(a, "and how do I put it back in?")
+    assert r.text.startswith("**Alienware Aurora ACT1250**\n")
+    assert "(searched for: install the memory module)" in r.text
+    same = _answered([memory], [Citation(ACT1250, 54)], query="remove the memory module")
+    assert "searched for" not in _reply(same, "remove the memory module").text
 
 
 def test_needs_device_is_a_prompt_offering_each_device_as_an_answer(indexed):
@@ -101,14 +139,14 @@ def test_needs_device_is_a_prompt_offering_each_device_as_an_answer(indexed):
 def test_answers_other_than_needs_device_offer_no_options(indexed):
     memory = _chunk(ACT1250, "Removing the memory module")
     clarify = Answer(
-        devices=_answered([], []).devices,
+        devices=_act1250(),
         status="needs-config-clarification",
         chunks=[memory],
         text="Is your processor cooled by air or liquid?",
         citations=[],
     )
     r = _reply(clarify)
-    assert r.text == "Is your processor cooled by air or liquid?"
+    assert r.text.endswith("\nIs your processor cooled by air or liquid?")
     assert r.options == []
     assert _reply(_answered([memory], [Citation(ACT1250, 54)])).options == []
 
@@ -136,9 +174,10 @@ def _files(messages: list[dict]) -> list[Path]:
 
 def test_chat_answers_with_cited_pages_and_follow_ups_keep_the_device(indexed):
     session, history = Session(), []
-    history = _respond("How do I remove the memory module from the Aurora ACT1250?", history, session)
+    question = "How do I remove the memory module from the Aurora ACT1250?"
+    history = _respond(question, history, session)
     turn = _last_turn(history)
-    assert history[0] == {"role": "user", "content": "How do I remove the memory module from the Aurora ACT1250?"}
+    assert history[0] == {"role": "user", "content": question}
     assert f"{ACT1250}.pdf, page" in turn[0]["content"]
     assert any(p.parent.name == ACT1250 for p in _files(turn))  # rendered pages and images
     history = _respond("and how do I put it back in?", history, session)
@@ -154,4 +193,13 @@ def test_chat_asks_which_device_and_picking_an_option_answers_the_question(index
     labels = [o["label"] for o in prompt["options"]]
     assert labels == ["Alienware Aurora ACT1250", "Alienware Aurora R16"]
     history = _respond(prompt["options"][1]["value"], history, session)
-    assert "alienware-aurora-r16-owners-manual-en-us.pdf, page" in _last_turn(history)[0]["content"]
+    r16_source = "alienware-aurora-r16-owners-manual-en-us.pdf, page"
+    assert r16_source in _last_turn(history)[0]["content"]
+
+
+def test_a_failed_turn_keeps_the_question_and_says_so_in_the_chat(tmp_path):
+    session = Session()
+    history, _ = respond("How do I remove the memory module?", [], session, data_dir=tmp_path)
+    assert history[0] == {"role": "user", "content": "How do I remove the memory module?"}
+    assert history[1]["role"] == "assistant"
+    assert "run `index` first" in history[1]["content"]
