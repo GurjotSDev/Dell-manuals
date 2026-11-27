@@ -8,6 +8,7 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "docling>=2.151",
+    "gradio>=6.32.0",
     "lancedb>=0.41.0",
     "ollama>=0.6.3",
     "pyarrow>=26.0.1",
@@ -19,6 +20,7 @@ dependencies = [
 index = "alienrag.cli:index_main"
 ask = "alienrag.cli:ask_main"
 eval = "alienrag.cli:eval_main"
+ui = "alienrag.cli:ui_main"
 
 [build-system]
 requires = ["uv_build>=0.13.0,<0.14.0"]

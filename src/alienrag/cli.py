@@ -1,4 +1,4 @@
-"""Entry points: `index`, `ask` and `eval`."""
+"""Entry points: `index`, `ask`, `eval` and `ui`."""
 
 import argparse
 import sys
@@ -122,3 +122,22 @@ def eval_main() -> None:
     print(format_report(report))
     if unreviewed := sum(not i.reviewed for i in items):
         print(f"\nDRAFT: {unreviewed}/{len(items)} eval items not yet reviewed by the user.")
+
+
+def ui_main() -> None:
+    ap = argparse.ArgumentParser(description="Open the chat in a local web page.")
+    ap.add_argument("--data-dir", type=Path, default=config.DATA_DIR, help="index to use")
+    ap.add_argument("--port", type=int, default=7860)
+    ap.add_argument("--no-browser", action="store_true", help="don't open a browser tab")
+    args = ap.parse_args()
+
+    from alienrag.ui import app
+
+    data_dir = args.data_dir.resolve()
+    app(data_dir=data_dir).launch(
+        server_name="127.0.0.1",  # local only
+        server_port=args.port,
+        inbrowser=not args.no_browser,
+        # Only what the chat shows: rendered pages and exported images.
+        allowed_paths=[str(data_dir / "pages"), str(data_dir / "images")],
+    )

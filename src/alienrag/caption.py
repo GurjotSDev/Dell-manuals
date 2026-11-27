@@ -57,7 +57,7 @@ def _write_cache(data_dir: Path, cache: dict[str, str]) -> None:
     os.replace(tmp, path)
 
 
-def _is_procedure_image(path: Path) -> bool:
+def is_procedure_image(path: Path) -> bool:
     """Big enough to illustrate a step; smaller pictures are note and warning icons."""
     with Image.open(path) as im:
         return max(im.size) >= config.CAPTION_MIN_PIXELS
@@ -82,7 +82,7 @@ def add_captions(chunks: list[Chunk], data_dir: Path, log=print) -> list[Chunk]:
         lines = []
         for rel in c.images:
             path = data_dir / rel
-            if not _is_procedure_image(path):
+            if not is_procedure_image(path):
                 continue
             key = f"{key_prefix}|{hashlib.sha256(path.read_bytes()).hexdigest()}"
             if key not in cache:
