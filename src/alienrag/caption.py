@@ -1,8 +1,13 @@
 """Image captions: a local vision model describes each procedure image, and the
 description is added to the embed text of the chunk the image is anchored to.
 
-Captions are cached in data/captions.json by image content, model and prompt version,
-so re-indexing only captions images it hasn't seen.
+Captions are cached in <data dir>/captions.json by model, prompt and image content, so
+re-indexing only captions images it hasn't seen.
+
+Captions change both searches: `embed_text` is what gets embedded and what the BM25 index
+covers. They are appended after chunking, so a captioned chunk's embed text can exceed
+CHUNK_MAX_TOKENS (the embedder's context is far larger) and its `n_tokens` counts the
+text without captions.
 """
 
 import hashlib
@@ -16,9 +21,6 @@ from PIL import Image
 from alienrag import config
 from alienrag.chunk import Chunk
 
-# Bump whenever CAPTION_PROMPT changes, so cached captions are redone.
-CAPTION_VERSION = 1
-
 CAPTION_PROMPT = (
     "This image is from a computer owner's manual. Describe what it shows in one or two "
     "sentences: the parts, connectors, screws, labels and the action illustrated. "
@@ -28,9 +30,15 @@ CAPTION_PROMPT = (
 CAPTION_PREFIX = "Image: "  # starts each caption line in a chunk's embed text
 
 
+def _prompt_id() -> str:
+    return hashlib.sha256(CAPTION_PROMPT.encode()).hexdigest()[:12]
+
+
 def signature() -> str:
-    """What the captions depend on: changing it re-chunks and re-embeds."""
-    return f"captions-v{CAPTION_VERSION}|{config.CAPTION_MODEL}|{config.CAPTION_MIN_PIXELS}"
+    """What the captions depend on: changing it re-chunks and re-embeds. The size
+    threshold decides which images are captioned, not what a caption says, so it is here
+    but not in the cache key."""
+    return f"captions|{config.CAPTION_MODEL}|{_prompt_id()}|{config.CAPTION_MIN_PIXELS}"
 
 
 def _cache_path(data_dir: Path) -> Path:
@@ -68,7 +76,7 @@ def _caption(path: Path) -> str:
 def add_captions(chunks: list[Chunk], data_dir: Path, log=print) -> list[Chunk]:
     """`chunks` with a caption line per procedure image appended to their embed text."""
     cache = _read_cache(data_dir)
-    model = f"{config.CAPTION_MODEL}|v{CAPTION_VERSION}"
+    key_prefix = f"{config.CAPTION_MODEL}|{_prompt_id()}"
     new = 0
     for c in chunks:
         lines = []
@@ -76,13 +84,15 @@ def add_captions(chunks: list[Chunk], data_dir: Path, log=print) -> list[Chunk]:
             path = data_dir / rel
             if not _is_procedure_image(path):
                 continue
-            key = f"{model}|{hashlib.sha256(path.read_bytes()).hexdigest()}"
+            key = f"{key_prefix}|{hashlib.sha256(path.read_bytes()).hexdigest()}"
             if key not in cache:
-                cache[key] = _caption(path)
+                text = _caption(path)
+                if not text:  # not cached: an empty reply is retried next run
+                    continue
+                cache[key] = text
                 new += 1
                 _write_cache(data_dir, cache)  # keep progress if a long run dies
-            if cache[key]:
-                lines.append(CAPTION_PREFIX + cache[key])
+            lines.append(CAPTION_PREFIX + cache[key])
         if lines:
             c.embed_text = c.embed_text + "\n\n" + "\n".join(lines)
     if new:

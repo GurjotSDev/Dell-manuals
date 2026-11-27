@@ -12,10 +12,11 @@ for spot-checking; `--data-dir` to point at another index).
 `index --captions` adds an index stage: `gemma4:12b` describes each procedure image (longer
 side ≥ `CAPTION_MIN_PIXELS = 200` px at render scale 2; smaller pictures are note and
 warning icons), and each description is appended to the embed text of the chunk the
-image is anchored to as an `Image: …` line. The display text the generator sees is
-unchanged. Captions are cached in `<data dir>/captions.json` by image content, model and
-prompt version. 149 of the 247 anchored images were captioned, in about 2 minutes on the
-RTX 5070 Ti.
+image is anchored to as an `Image: …` line. Embed text feeds both the vectors and the
+BM25 index, so captions change both searches. The display text the generator sees is
+unchanged. Captions are cached in `<data dir>/captions.json` by model, prompt and image
+content. 149 of the 247 anchored images were captioned, in about 2 minutes on the RTX
+5070 Ti.
 
 Measured on an index built with captions (`index --captions --data-dir
 data/index-captions`, same parses, models and settings as the #9 baseline below):
@@ -28,7 +29,8 @@ data/index-captions`, same parses, models and settings as the #9 baseline below)
 
 Page-hit@5 was already at 100% without captions, so it couldn't show a gain. For a finer
 signal, the rank of each expected page group was compared (retrieval only, on the
-session reader's rewritten query as `answer` uses it):
+session reader's rewritten query as `answer` uses it; `uv run python
+scripts/compare_retrieval.py data data/index-captions`):
 
 | Item | Device, pages | Off | On |
 | --- | --- | --- | --- |

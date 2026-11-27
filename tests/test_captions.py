@@ -82,7 +82,9 @@ def _recording_vision_calls(monkeypatch) -> list[str]:
 
 def test_captions_are_off_by_default(monkeypatch):
     calls = _recording_vision_calls(monkeypatch)
-    index(MANUALS, TEST_DATA, rechunk=True, aliases_file=ALIASES, log=lambda *_: None)
+    # No rechunk: chunks made with the default settings are kept, and any made otherwise
+    # are re-chunked with them, so the shared index isn't re-embedded on every run.
+    index(MANUALS, TEST_DATA, aliases_file=ALIASES, log=lambda *_: None)
     assert calls == []
     assert not any("Image: " in c.embed_text for c in load_all_chunks(TEST_DATA))
 
