@@ -7,6 +7,48 @@
 Run with `uv run eval` (add `--answers` to print each answer next to the expected one
 for spot-checking; `--data-dir` to point at another index).
 
+## 2026-11-26: #10 image-caption experiment — dropped (captions stay off)
+
+`index --captions` adds an index stage: `gemma4:12b` describes each procedure image (longer
+side ≥ `CAPTION_MIN_PIXELS = 200` px at render scale 2; smaller pictures are note and
+warning icons), and each description is appended to the embed text of the chunk the
+image is anchored to as an `Image: …` line. Embed text feeds both the vectors and the
+BM25 index, so captions change both searches. The display text the generator sees is
+unchanged. Captions are cached in `<data dir>/captions.json` by model, prompt and image
+content. 149 of the 247 anchored images were captioned, in about 2 minutes on the RTX
+5070 Ti.
+
+Measured on an index built with captions (`index --captions --data-dir
+data/index-captions`, same parses, models and settings as the #9 baseline below):
+
+| Metric | Captions off (#9 baseline) | Captions on |
+| --- | --- | --- |
+| Device-resolution accuracy | 23/23 (100%) | 23/23 (100%) |
+| Retrieval page-hit@5 | 16/16 (100%) | 16/16 (100%) |
+| Correct-refusal rate | 4/4 (100%), false refusals: 0 | 4/4 (100%), false refusals: 0 |
+
+Page-hit@5 was already at 100% without captions, so it couldn't show a gain. For a finer
+signal, the rank of each expected page group was compared (retrieval only, on the
+session reader's rewritten query as `answer` uses it; `uv run python
+scripts/compare_retrieval.py data data/index-captions`):
+
+| Item | Device, pages | Off | On |
+| --- | --- | --- | --- |
+| sd-act1250-diag-2-3 | act1250 p.130-131 | 2 | 1 |
+| cfg-act1250-cpu-cooler-removal | act1250 p.81-82 | 3 | 2 |
+| cfg-act1250-fans-500w-air | act1250 p.38-39 | 2 | 1 |
+| cfg-r16-liquid-cooler-removal | r16 p.85 / p.89 | 1 / 2 | 2 / 1 |
+
+The other 18 groups kept their rank. Mean reciprocal rank went from 0.717 to 0.768.
+
+**Decision: drop.** The rule in #10 was to keep the stage only if page-hit@5 improves,
+and it doesn't. The rank gain is small, from one run over 23 groups, and some captions
+are wrong or noise: an ACT1250 memory-module figure was described as a graphics card
+being inserted, and the brand logo gets a caption. Captions also need a 12B vision model
+at index time. `config.CAPTIONS` stays `False`. The stage and its cache remain, so the
+experiment can be re-run when the golden set gains image-dependent or harder retrieval
+questions that page-hit@5 isn't saturated on.
+
 ## 2026-11-26: after #9 (comparison questions) — current baseline
 
 Same models, index and per-question settings as #7 below, plus #9 for questions about
