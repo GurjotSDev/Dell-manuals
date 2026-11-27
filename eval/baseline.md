@@ -35,8 +35,8 @@ several devices:
   device, per-device citations, and saying under its heading when a device's manual
   doesn't cover the topic.
 - "Compare that with the R16" adds the R16 to the session's devices: a message naming
-  a device extends the active set when it has a comparison word (compare, versus, vs,
-  against, differ…, both), and replaces it otherwise ("what about the R16?").
+  one device extends the active set when it has a comparison word (compare, versus, vs,
+  differ…), and replaces it otherwise ("what about the R16?").
 
 | Metric | Result |
 | --- | --- |

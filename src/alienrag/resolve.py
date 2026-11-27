@@ -69,8 +69,9 @@ def resolve(
     guess at device-less follow-ups ("mine has liquid cooling" -> every device); so a new
     device named only in a form the aliases miss is not picked up mid-conversation. A
     shared name the LLM can't settle also falls back to them. A question that names
-    devices replaces them ("what about the R16?"), unless it asks for a comparison
-    ("compare that with the R16"): then the devices it names are added to them.
+    devices replaces them ("what about the R16?"), unless it names one device and asks
+    for a comparison ("compare that with the R16"): then that device is added to them.
+    A comparison naming several devices names its whole set.
     """
     by_id = {d.id: d for d in registry}
     if forced:
@@ -91,17 +92,19 @@ def resolve(
     return _known(inherited or [], by_id)
 
 
-# Words that ask to compare against what's already being discussed.
+# Words that ask to compare with what's already being discussed. Not "against" or
+# "both", which ordinary questions use ("protect it against static").
 _COMPARING = re.compile(
-    r"\b(compare[ds]?|comparing|comparison|versus|vs|against|differ\w*|both)\b", re.IGNORECASE
+    r"\b(compare[ds]?|comparing|comparison|versus|vs|differ\w*)\b", re.IGNORECASE
 )
 
 
 def _extending(
     inherited: list[str] | None, named: list[Device], question: str, by_id: dict[str, Device]
 ) -> list[Device]:
-    """`named`, after the `inherited` devices when `question` asks for a comparison."""
-    if not inherited or not _COMPARING.search(question):
+    """`named`, after the `inherited` devices when `question` names one device and asks
+    for a comparison."""
+    if not inherited or len(named) != 1 or not _COMPARING.search(question):
         return named
     kept = _known(inherited, by_id)
     return kept + [d for d in named if d not in kept]
