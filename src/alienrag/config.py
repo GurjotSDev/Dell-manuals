@@ -41,3 +41,13 @@ CONTEXT_MAX_CHUNKS_COMPARISON = 20
 SESSION_TURNS = 4  # earlier turns a chat session keeps for rewriting follow-ups
 
 IMAGES_SCALE = 2.0  # render scale for exported pictures
+
+# Image captions (#10): at index time a vision model describes each procedure image and
+# the description is added to its chunk's embed text. Off by default (`index --captions`
+# turns it on). Measured in eval/baseline.md: page-hit@5 unchanged (already 16/16), so
+# it stays off.
+CAPTIONS = False
+CAPTION_MODEL = "gemma4:12b"
+# Pictures whose longer side (at IMAGES_SCALE) is shorter than this are note and warning
+# icons, not procedure illustrations, and are not captioned.
+CAPTION_MIN_PIXELS = 200

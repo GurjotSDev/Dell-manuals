@@ -15,11 +15,25 @@ def index_main() -> None:
     ap = argparse.ArgumentParser(description="Parse, chunk and embed manuals in Manuals/.")
     ap.add_argument("--force", action="store_true", help="re-parse even if unchanged")
     ap.add_argument("--rechunk", action="store_true", help="re-chunk from cached parses")
+    ap.add_argument(
+        "--captions",
+        action=argparse.BooleanOptionalAction,
+        default=config.CAPTIONS,
+        help=f"add {config.CAPTION_MODEL} descriptions of procedure images to the embedded "
+        f"text (default: {'on' if config.CAPTIONS else 'off'}); toggling re-chunks and re-embeds",
+    )
+    ap.add_argument("--data-dir", type=Path, default=config.DATA_DIR, help="index to build")
     args = ap.parse_args()
 
     from alienrag.indexing import index
 
-    index(config.MANUALS_DIR, config.DATA_DIR, force=args.force, rechunk=args.rechunk)
+    index(
+        config.MANUALS_DIR,
+        args.data_dir,
+        force=args.force,
+        rechunk=args.rechunk,
+        captions=args.captions,
+    )
 
 
 def _print_answer(result: "Answer") -> None:

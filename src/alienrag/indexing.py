@@ -37,8 +37,13 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _chunker_signature() -> str:
-    return f"v{CHUNKER_VERSION}|{config.EMBED_TOKENIZER}|{config.CHUNK_MAX_TOKENS}"
+def _chunker_signature(captions: bool) -> str:
+    sig = f"v{CHUNKER_VERSION}|{config.EMBED_TOKENIZER}|{config.CHUNK_MAX_TOKENS}"
+    if captions:
+        from alienrag.caption import signature
+
+        sig += f"|{signature()}"
+    return sig
 
 
 def _embedder_signature() -> str:
@@ -71,6 +76,7 @@ def index(
     *,
     force: bool = False,
     rechunk: bool = False,
+    captions: bool | None = None,
     aliases_file: Path | None = config.ALIASES_FILE,
     log=print,
 ) -> IndexReport:
@@ -81,6 +87,10 @@ def index(
     re-embedded into the hybrid-search store only when they were re-chunked, the embedder
     changed, or the store lacks them. Outputs of PDFs no longer in `manuals_dir` are removed.
     The device registry is rebuilt every run from the PDFs present and `aliases_file`.
+
+    With `captions` (default `config.CAPTIONS`), a vision model's description of each
+    procedure image is added to its chunk's embed text. Turning it on or off counts as a
+    chunker change; captions are cached, so only new images are captioned.
     """
     from alienrag import store
     from alienrag.chunk import build_chunker, chunk_document, chunks_path, save_chunks
@@ -88,11 +98,13 @@ def index(
     from alienrag.parse import build_converter, load_parsed, parse_pdf, parsed_path
     from alienrag.structure import repair_headings
 
+    if captions is None:
+        captions = config.CAPTIONS
     data_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = data_dir / "manifest.json"
     manifest = _read_manifest(manifest_path)
     report = IndexReport()
-    signature = _chunker_signature()
+    signature = _chunker_signature(captions)
     embed_sig = _embedder_signature()
     pdfs = sorted(manuals_dir.glob("*.pdf"))
     if any(e.get("embedder", embed_sig) != embed_sig for e in manifest.values()):
@@ -136,6 +148,10 @@ def index(
             log(f"[struct] {pdf.name}: {kept} outline headings kept, {demoted} demoted to text")
             chunker = chunker or build_chunker()
             chunks = chunk_document(chunker, doc, pdf.stem)
+            if captions:
+                from alienrag.caption import add_captions
+
+                chunks = add_captions(chunks, data_dir, log)
             save_chunks(chunks, pdf.stem, data_dir)
             report.chunk_counts[pdf.name] = len(chunks)
             log(f"[chunk] {pdf.name}: {len(chunks)} chunks")
