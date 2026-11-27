@@ -136,6 +136,74 @@ def _fts_text(query: str) -> str:
     return " ".join(re.findall(r"[\w.]+", query))
 
 
+def _hit(row: dict, score: float, similarity: float) -> Hit:
+    return Hit(
+        id=row["id"],
+        source=row["source"],
+        product=row["product"],
+        text=row["text"],
+        headings=list(row["headings"]),
+        pages=list(row["pages"]),
+        images=list(row["images"]),
+        score=score,
+        similarity=similarity,
+    )
+
+
+def _position(hit_id: str) -> tuple[str, int]:
+    source, _, n = hit_id.rpartition(":")
+    return source, int(n)
+
+
+def complete_sections(
+    data_dir: Path, hits: list[Hit], *, max_section: int, max_total: int
+) -> list[Hit]:
+    """`hits`, then the rest of each hit's section, in manual order.
+
+    A section is the run of consecutive chunks with the same heading path: a procedure
+    or a spec table split over several chunks. Sections of more than `max_section`
+    chunks are left as retrieved (too big to add whole), and nothing is added past
+    `max_total` chunks in all.
+    """
+    tbl = _open(data_dir)
+    if tbl is None or not hits:
+        return hits
+    want: list[str] = []
+    for h in hits:
+        source, n = _position(h.id)
+        # max_section on each side: one past the furthest neighbour a section of
+        # max_section chunks can have, so a bigger section is seen as too big.
+        want += [f"{source}:{i:05d}" for i in range(n - max_section, n + max_section + 1) if i >= 0]
+    cols = ["id", "source", "product", "text", "headings", "pages", "images"]
+    rows = {
+        r["id"]: r
+        for r in tbl.search()
+        .where("id IN (" + ", ".join(_quote(i) for i in dict.fromkeys(want)) + ")")
+        .select(cols)
+        .limit(len(want))
+        .to_list()
+    }
+    out = list(hits)
+    seen = {h.id for h in hits}
+    for h in hits:
+        source, n = _position(h.id)
+        section = [h.id]
+        for step in (-1, 1):
+            i = n + step
+            while (r := rows.get(f"{source}:{i:05d}")) and list(r["headings"]) == h.headings:
+                section.append(r["id"])
+                i += step
+        if len(section) > max_section:
+            continue
+        for sid in sorted(section):
+            if sid in seen or len(out) >= max_total:
+                continue
+            r = rows[sid]
+            seen.add(sid)
+            out.append(_hit(r, 0.0, 0.0))  # not ranked: added to complete a section
+    return out
+
+
 def search(data_dir: Path, query: str, products: list[str], k: int = 8) -> list[Hit]:
     """Hybrid (BM25 + vector, reciprocal-rank fused) search restricted to `products`."""
     tbl = _open(data_dir)
@@ -152,16 +220,5 @@ def search(data_dir: Path, query: str, products: list[str], k: int = 8) -> list[
         .to_list()
     )
     return [
-        Hit(
-            id=r["id"],
-            source=r["source"],
-            product=r["product"],
-            text=r["text"],
-            headings=list(r["headings"]),
-            pages=list(r["pages"]),
-            images=list(r["images"]),
-            score=float(r["_relevance_score"]),
-            similarity=_cosine(qvec, list(r["vector"])),
-        )
-        for r in rows
+        _hit(r, float(r["_relevance_score"]), _cosine(qvec, list(r["vector"]))) for r in rows
     ]

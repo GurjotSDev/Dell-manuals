@@ -18,8 +18,7 @@ CATEGORIES = (
     "configuration-dependent",
     "not-in-manual",
 )
-# Answer statuses from the spec, including ones the pipeline doesn't produce yet
-# (needs-config-clarification is a later issue), so the eval set can already expect them.
+# Answer statuses from the spec; the eval set may expect any of them.
 STATUSES = ("answered", "refused", "needs-device", "needs-config-clarification")
 REFUSED = "refused"
 HIT_AT = 5  # page-hit@5: only the top 5 retrieved chunks count
