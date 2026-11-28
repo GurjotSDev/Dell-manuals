@@ -94,3 +94,37 @@ def test_a_new_session_remembers_nothing_from_an_earlier_one(chat):
     chat("How do I remove the memory module from the Aurora ACT1250?")
     a = answer("and how do I put it back in?", Session(), data_dir=TEST_DATA)
     assert a.status == "needs-device"
+
+
+# Replying to "Which device?" with the full marketing name, as the UI's buttons do.
+
+
+def test_an_identity_question_is_answered_once_the_device_is_named(indexed):
+    session = Session()
+    assert answer("What is my motherboard", session, data_dir=TEST_DATA).status == "needs-device"
+    a = answer("Alienware Aurora ACT1250", session, data_dir=TEST_DATA)
+    assert a.status == "answered" and a.chunks, a.text
+    assert [d.id for d in a.devices] == ["act1250"]
+    assert "motherboard" in a.query.lower() or "system board" in a.query.lower(), a.query
+    assert not a.text.startswith("Noted"), a.text
+    assert session.configuration == []
+
+
+def test_a_procedure_question_is_answered_once_the_device_is_named(indexed):
+    session = Session()
+    assert answer("How do I remove the memory module?", session, data_dir=TEST_DATA).status == "needs-device"
+    a = answer("Alienware Aurora R16", session, data_dir=TEST_DATA)
+    assert a.status == "answered"
+    assert [d.id for d in a.devices] == ["r16"]
+    assert any("Removing the memory module" in c.headings for c in a.chunks), a.query
+    assert session.configuration == []
+
+
+def test_naming_the_device_with_a_configuration_still_answers_the_waiting_question(indexed):
+    session = Session()
+    assert answer("What is my motherboard", session, data_dir=TEST_DATA).status == "needs-device"
+    a = answer("Alienware Aurora R16, and mine has liquid cooling", session, data_dir=TEST_DATA)
+    assert a.status == "answered" and a.chunks, a.text
+    assert [d.id for d in a.devices] == ["r16"]
+    assert any("liquid" in c.lower() for c in session.configuration), session.configuration
+    assert not any("R16" in c for c in session.configuration), session.configuration

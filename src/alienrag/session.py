@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 import ollama
 
 from alienrag import config
+from alienrag.registry import Device, names_only
 
 
 @dataclass
@@ -30,6 +31,9 @@ class Session:
     active: list[str] = field(default_factory=list)
     # The user's stated configuration as short facts, e.g. ["RTX 5080 GPU", "liquid cooling"].
     configuration: list[str] = field(default_factory=list)
+    # The standalone query of the last question, when it was answered with "Which
+    # device?"; empty otherwise.
+    pending: str = ""
     # The last few turns, oldest first (at most config.SESSION_TURNS).
     turns: list[Turn] = field(default_factory=list)
 
@@ -74,12 +78,19 @@ def _history(turns: list[Turn]) -> str:
     )
 
 
-def read(question: str, session: Session) -> Reading:
+def read(question: str, session: Session, registry: list[Device]) -> Reading:
     """Read `question` against the session: its standalone query and the configuration.
 
     A first message that can't refer back to anything or state a configuration is taken
-    as it is, with no model call.
+    as it is, with no model call; so is a reply that only names a `registry` device
+    after "Which device?", which means the question that was waiting for it. A reply
+    that also states facts means that question too.
+
+    Device names are never configuration, whatever the reader makes of them: a fact
+    that only names a device is dropped.
     """
+    if session.pending and names_only(question, registry):
+        return Reading(session.pending, session.configuration)
     if not session.turns and not session.configuration and not _FIRST_PERSON.search(question):
         return Reading(question, [])
     known = "\n".join(f"- {c}" for c in session.configuration) or "(none)"
@@ -107,9 +118,12 @@ def read(question: str, session: Session) -> Reading:
     if not isinstance(facts, list):
         facts = session.configuration
     facts = list(dict.fromkeys(f.strip() for f in facts if isinstance(f, str) and f.strip()))
+    facts = [f for f in facts if not names_only(f, registry)]
     query = query.strip() if isinstance(query, str) else question
     # An empty query means the message only stated facts; one that states nothing new
     # is still a question, whatever the reader made of it.
     if not query and facts == session.configuration:
         query = question
+    if not query and session.pending:
+        query = session.pending
     return Reading(query, facts)

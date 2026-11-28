@@ -91,6 +91,33 @@ def _norm(s: str) -> str:
     return " " + " ".join(re.findall(r"[a-z0-9]+", s.lower())) + " "
 
 
+def without_device_names(text: str, devices: list[Device]) -> str:
+    """`text` with every device's model code, name and aliases taken out (whole words,
+    longest first, case-insensitive)."""
+    terms = sorted({t for d in devices for t in [d.id, d.name, *d.aliases] if t.strip()}, key=len)
+    for t in reversed(terms):
+        text = re.sub(rf"(?<![A-Za-z0-9]){re.escape(t)}(?![A-Za-z0-9])", "", text, flags=re.I)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+# Words that can surround a device name without saying anything else: "The Aurora R16",
+# "it's my ACT1250", "Aurora R16 desktop". As `_norm` splits them: "it's" is "it s".
+_FILLER = {
+    "a", "an", "the", "my", "mine", "it", "its", "s", "is", "i", "ve", "have", "one", "own",
+    "alienware", "dell", "desktop", "computer", "pc", "model", "please",
+}
+
+
+def names_only(text: str, devices: list[Device]) -> bool:
+    """`text` names a device and says nothing else: a reply like "The Aurora R16".
+    Matched as `match_aliases` matches, ignoring case and punctuation."""
+    said = rest = _norm(text)
+    terms = {n for d in devices for t in [d.id, d.name, *d.aliases] if (n := _norm(t).strip())}
+    for term in sorted(terms, key=len, reverse=True):
+        rest = re.sub(rf"(?<= ){re.escape(term)}(?= )", " ", rest)
+    return rest != said and all(w in _FILLER for w in rest.split())
+
+
 @dataclass
 class AliasMatch:
     devices: list[Device]  # devices named unambiguously, in order of first mention

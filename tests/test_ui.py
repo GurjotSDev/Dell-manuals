@@ -15,7 +15,7 @@ from alienrag.answer import Answer, Citation, Session
 from alienrag.indexing import index
 from alienrag.registry import load_registry, model_code
 from alienrag.store import Hit
-from alienrag.ui import reply, respond
+from alienrag.ui import app, reply, respond
 
 ROOT = Path(__file__).resolve().parents[1]
 MANUALS = ROOT / "Manuals"
@@ -186,13 +186,27 @@ def test_chat_answers_with_cited_pages_and_follow_ups_keep_the_device(indexed):
     assert session.active == ["act1250"]
 
 
+def _pick(value: str, index: int, history: list[dict], session: Session):
+    """Click option `index` (value `value`) of a chat message, as the browser does."""
+    import gradio as gr
+
+    demo = app(data_dir=TEST_DATA, manuals_dir=MANUALS)
+    pick = next((f.fn for f in demo.fns.values() if f.name == "pick"), None)
+    assert pick is not None, "app() registers no handler named pick for option_select"
+    return pick(gr.SelectData(None, {"index": index, "value": value}), history, session)
+
+
 def test_chat_asks_which_device_and_picking_an_option_answers_the_question(indexed):
     session = Session()
     history = _respond("How do I remove the memory module?", [], session)
     prompt = _last_turn(history)[0]
     labels = [o["label"] for o in prompt["options"]]
     assert labels == ["Alienware Aurora ACT1250", "Alienware Aurora R16"]
-    history = _respond(prompt["options"][1]["value"], history, session)
+    # The click goes through the handler Gradio calls, with the payload its Chatbot
+    # sends for option_select: {index, value} where value is the option's value.
+    history, session_out = _pick(prompt["options"][1]["value"], 1, history, session)
+    assert session_out is session
+    assert [m for m in history if m["role"] == "user"][-1]["content"] == "Alienware Aurora R16"
     r16_source = "alienware-aurora-r16-owners-manual-en-us.pdf, page"
     assert r16_source in _last_turn(history)[0]["content"]
 

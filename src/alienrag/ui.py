@@ -168,7 +168,8 @@ def app(
         return "", history, session
 
     def pick(event: gr.SelectData, history: list[dict], session: Session):
-        _, history, session = submit(str(event.value["value"]), history, session)
+        # Chatbot's option_select sends {index, value}: event.value is the option's value.
+        _, history, session = submit(str(event.value), history, session)
         return history, session
 
     with gr.Blocks(title="Alienware manuals") as demo:

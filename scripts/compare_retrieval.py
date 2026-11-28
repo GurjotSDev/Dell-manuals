@@ -42,7 +42,7 @@ def _mrr(r: dict) -> float:
 if __name__ == "__main__":
     a, b = Path(sys.argv[1]), Path(sys.argv[2])
     items = [i for i in load_golden(config.GOLDEN_FILE) if i.pages]
-    queries = {it.id: read(it.question, Session()).query for it in items}
+    queries = {it.id: read(it.question, Session(), load_registry(a)).query for it in items}
     ra, rb = ranks(a, items, queries), ranks(b, items, queries)
     for key in ra:
         if ra[key] != rb[key]:
