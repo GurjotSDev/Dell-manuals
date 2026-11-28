@@ -9,7 +9,7 @@ from typing import Literal
 import ollama
 
 from alienrag import config, store
-from alienrag.registry import Device, load_registry
+from alienrag.registry import Device, load_registry, without_device_names
 from alienrag.resolve import UnknownDevice, resolve
 from alienrag.session import Session, Turn, read
 
@@ -269,15 +269,6 @@ def _noted(configuration: list[str], devices: list[Device]) -> str:
     return f"Noted for your {machine}: {facts}. I'll use this for the rest of the session."
 
 
-def _without_device_names(query: str, registry: list[Device]) -> str:
-    """`query` with every device's model code, name and aliases taken out (whole words,
-    longest first, case-insensitive)."""
-    terms = sorted({t for d in registry for t in [d.id, d.name, *d.aliases] if t.strip()}, key=len)
-    for t in reversed(terms):
-        query = re.sub(rf"(?<![A-Za-z0-9]){re.escape(t)}(?![A-Za-z0-9])", "", query, flags=re.I)
-    return re.sub(r"\s+", " ", query).strip()
-
-
 def _retrieve(
     data_dir: Path, query: str, devices: list[Device], registry: list[Device]
 ) -> tuple[list[store.Hit], list[store.Hit]]:
@@ -305,7 +296,7 @@ def _retrieve(
         )
         return ranked, hits
     budget = max(config.RETRIEVE_K, config.CONTEXT_MAX_CHUNKS_COMPARISON // len(devices))
-    nameless = _without_device_names(query, registry)
+    nameless = without_device_names(query, registry)
     rankings: list[list[store.Hit]] = []
     added: list[store.Hit] = []
     for d in devices:
@@ -338,9 +329,11 @@ def answer(question: str, session: Session, *, data_dir: Path = config.DATA_DIR)
     registry = load_registry(data_dir)
     if not registry:
         raise RuntimeError(f"no device registry in {data_dir}; run `index` first")
-    reading = read(question, session)
+    reading = read(question, session, registry)
     session.configuration = reading.configuration
     query = reading.query
+    # A question waiting for its device is answered by the next message or dropped.
+    session.pending = ""
     devices = resolve(question, session.devices, registry, inherited=session.active)
     if not query:  # the message only stated facts about the user's machine
         if devices:
@@ -354,6 +347,7 @@ def answer(question: str, session: Session, *, data_dir: Path = config.DATA_DIR)
             query=query,
         )
     elif not devices:
+        session.pending = query
         result = Answer(
             devices=[],
             status="needs-device",

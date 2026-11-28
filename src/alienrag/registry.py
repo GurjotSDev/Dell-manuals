@@ -91,6 +91,32 @@ def _norm(s: str) -> str:
     return " " + " ".join(re.findall(r"[a-z0-9]+", s.lower())) + " "
 
 
+def without_device_names(text: str, devices: list[Device]) -> str:
+    """`text` with every device's model code, name and aliases taken out (whole words,
+    longest first, case-insensitive)."""
+    terms = sorted({t for d in devices for t in [d.id, d.name, *d.aliases] if t.strip()}, key=len)
+    for t in reversed(terms):
+        text = re.sub(rf"(?<![A-Za-z0-9]){re.escape(t)}(?![A-Za-z0-9])", "", text, flags=re.I)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+# Words that can surround a device name without saying anything else: "The Aurora R16",
+# "it's my ACT1250".
+_FILLER = {
+    "a", "an", "the", "my", "mine", "it", "its", "it's", "is", "i", "i've", "have", "one",
+    "own", "alienware", "dell", "please",
+}
+
+
+def names_only(text: str, devices: list[Device]) -> bool:
+    """`text` names a device and says nothing else: a reply like "The Aurora R16"."""
+    match = match_aliases(text, devices)
+    if not (match.devices or match.ambiguous):
+        return False
+    rest = re.findall(r"[a-z0-9']+", without_device_names(text, devices).lower())
+    return all(w in _FILLER for w in rest)
+
+
 @dataclass
 class AliasMatch:
     devices: list[Device]  # devices named unambiguously, in order of first mention
