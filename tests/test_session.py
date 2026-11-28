@@ -118,3 +118,13 @@ def test_a_procedure_question_is_answered_once_the_device_is_named(indexed):
     assert [d.id for d in a.devices] == ["r16"]
     assert any("Removing the memory module" in c.headings for c in a.chunks), a.query
     assert session.configuration == []
+
+
+def test_naming_the_device_with_a_configuration_still_answers_the_waiting_question(indexed):
+    session = Session()
+    assert answer("What is my motherboard", session, data_dir=TEST_DATA).status == "needs-device"
+    a = answer("Alienware Aurora R16, and mine has liquid cooling", session, data_dir=TEST_DATA)
+    assert a.status == "answered" and a.chunks, a.text
+    assert [d.id for d in a.devices] == ["r16"]
+    assert any("liquid" in c.lower() for c in session.configuration), session.configuration
+    assert not any("R16" in c for c in session.configuration), session.configuration

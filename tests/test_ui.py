@@ -191,8 +191,8 @@ def _pick(value: str, index: int, history: list[dict], session: Session):
     import gradio as gr
 
     demo = app(data_dir=TEST_DATA, manuals_dir=MANUALS)
-    pick = next(f for f in demo.fns.values() if f.name == "pick").fn
-    assert pick is not None
+    pick = next((f.fn for f in demo.fns.values() if f.name == "pick"), None)
+    assert pick is not None, "app() registers no handler named pick for option_select"
     return pick(gr.SelectData(None, {"index": index, "value": value}), history, session)
 
 

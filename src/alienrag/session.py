@@ -78,17 +78,17 @@ def _history(turns: list[Turn]) -> str:
     )
 
 
-def read(question: str, session: Session, registry: list[Device] | None = None) -> Reading:
+def read(question: str, session: Session, registry: list[Device]) -> Reading:
     """Read `question` against the session: its standalone query and the configuration.
 
     A first message that can't refer back to anything or state a configuration is taken
     as it is, with no model call; so is a reply that only names a `registry` device
-    after "Which device?", which means the question that was waiting for it.
+    after "Which device?", which means the question that was waiting for it. A reply
+    that also states facts means that question too.
 
     Device names are never configuration, whatever the reader makes of them: a fact
     that only names a device is dropped.
     """
-    registry = registry or []
     if session.pending and names_only(question, registry):
         return Reading(session.pending, session.configuration)
     if not session.turns and not session.configuration and not _FIRST_PERSON.search(question):
@@ -124,4 +124,6 @@ def read(question: str, session: Session, registry: list[Device] | None = None) 
     # is still a question, whatever the reader made of it.
     if not query and facts == session.configuration:
         query = question
+    if not query and session.pending:
+        query = session.pending
     return Reading(query, facts)
